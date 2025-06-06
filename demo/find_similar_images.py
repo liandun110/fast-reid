@@ -1,0 +1,67 @@
+import os
+import glob
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+from sklearn.metrics.pairwise import cosine_similarity
+
+def load_features_and_images(folder_path):
+    """
+    从指定文件夹加载图片和对应的特征
+    :param folder_path: 文件夹路径
+    :return: 图片路径列表，特征数组
+    """
+    image_paths = sorted(glob.glob(os.path.join(folder_path, '*.png')))
+    feature_paths = sorted(glob.glob(os.path.join(folder_path, '*.npy')))
+    features = []
+    for feat_path in feature_paths:
+        feat = np.load(feat_path)
+        features.append(feat)
+    features = np.array(features).squeeze()
+    return image_paths, features
+
+def find_top_n_similar(features, image_paths, top_n):
+    """
+    为每张图片找到最相似的top_n张图片
+    :param features: 特征数组
+    :param image_paths: 图片路径列表
+    :param top_n: 要查找的相似图片数量
+    :return: 包含每张图片对应的top_n张相似图片信息的列表
+    """
+    top_n_results = []
+    num_images = len(image_paths)
+    for i in range(num_images):
+        similarity_scores = cosine_similarity([features[i]], features)[0]
+        top_n_indices = np.argsort(similarity_scores)[-(top_n + 1):][::-1][1:]  # 排除自身
+        top_n_scores = similarity_scores[top_n_indices]
+        top_n_images = [image_paths[idx] for idx in top_n_indices]
+        top_n_results.append((image_paths[i], top_n_images, top_n_scores))
+    return top_n_results
+
+def visualize_results(top_n_results, top_n):
+    """
+    可视化结果，显示每张图片和其最相似的top_n张图片，并显示相似度得分
+    :param top_n_results: 包含每张图片对应的top_n张相似图片信息的列表
+    :param top_n: 要显示的相似图片数量
+    """
+    for query_image, top_n_images, top_n_scores in top_n_results:
+        fig, axes = plt.subplots(1, top_n + 1, figsize=(3 * (top_n + 1), 3))
+        query_img = cv2.cvtColor(cv2.imread(query_image), cv2.COLOR_BGR2RGB)
+        axes[0].imshow(query_img)
+        axes[0].set_title('Query Image')
+        axes[0].axis('off')
+
+        for j, (similar_image, score) in enumerate(zip(top_n_images, top_n_scores)):
+            sim_img = cv2.cvtColor(cv2.imread(similar_image), cv2.COLOR_BGR2RGB)
+            axes[j + 1].imshow(sim_img)
+            axes[j + 1].set_title(f'Score: {score:.3f}')
+            axes[j + 1].axis('off')
+
+        plt.show()
+
+if __name__ == '__main__':
+    folder_path = 'datasets/test_images'  # 请替换为实际的文件夹路径
+    top_n = 3  # 可以修改这个值来指定要显示的相似图片数量
+    image_paths, features = load_features_and_images(folder_path)
+    top_n_results = find_top_n_similar(features, image_paths, top_n)
+    visualize_results(top_n_results, top_n)

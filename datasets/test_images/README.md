@@ -1,0 +1,1 @@
+【20250604】yaojiu1.png与yaojiu2.png的相似度为0.927，但hongbo1.png与hongbo2.png的相似度为0.933。
