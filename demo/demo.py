@@ -46,6 +46,7 @@ def get_parser():
     parser.add_argument(
         "--config-file",
         metavar="FILE",
+        default='configs/Market1501/mgn_R50-ibn.yml',
         help="path to config file",
     )
     parser.add_argument(
@@ -61,13 +62,13 @@ def get_parser():
     )
     parser.add_argument(
         "--output",
-        default='demo_output',
+        default='datasets/test_images',
         help='path to save features'
     )
     parser.add_argument(
         "--opts",
         help="Modify config options using the command-line 'KEY VALUE' pairs",
-        default=[],
+        default=['MODEL.WEIGHTS', 'logs/market1501/mgn_R50-ibn/model_final.pth'],
         nargs=argparse.REMAINDER,
     )
     return parser
@@ -91,6 +92,7 @@ if __name__ == '__main__':
             args.input = glob.glob(os.path.expanduser(args.input[0]))
             assert args.input, "The input path(s) was not found"
         for path in tqdm.tqdm(args.input):
+            print(path)
             img = cv2.imread(path)
             feat = demo.run_on_image(img)
             feat = postprocess(feat)

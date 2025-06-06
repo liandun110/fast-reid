@@ -11,7 +11,8 @@ def load_features_and_images(folder_path):
     :param folder_path: 文件夹路径
     :return: 图片路径列表，特征数组
     """
-    image_paths = sorted(glob.glob(os.path.join(folder_path, '*.png')))
+    image_paths = sorted(glob.glob(os.path.join(folder_path, '*.png')) + glob.glob(os.path.join(folder_path, '*.jpg')))
+    print("图像数：{}".format(len(image_paths)))
     feature_paths = sorted(glob.glob(os.path.join(folder_path, '*.npy')))
     features = []
     for feat_path in feature_paths:
