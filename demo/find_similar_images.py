@@ -39,30 +39,60 @@ def find_top_n_similar(features, image_paths, top_n):
         top_n_results.append((image_paths[i], top_n_images, top_n_scores))
     return top_n_results
 
+def extract_id_from_filename(filename):
+    """
+    从文件名中提取ID信息
+    例如: 1501_c6s4_001877_00.jpg -> 1501
+    """
+    basename = os.path.basename(filename)
+    # 假设ID是文件名的前四位数字
+    try:
+        # 查找第一个下划线的位置
+        first_underscore = basename.find('_')
+        if first_underscore != -1:
+            # 提取下划线前的部分作为ID
+            pid = basename[:first_underscore]
+            return pid
+    except:
+        pass
+    
+    # 如果无法提取，返回默认值
+    return "Unkwonw"
+
+
 def visualize_results(top_n_results, top_n):
     """
-    可视化结果，显示每张图片和其最相似的top_n张图片，并显示相似度得分
+    可视化结果，显示每张图片和其最相似的top_n张图片，并显示相似度得分和ID
     :param top_n_results: 包含每张图片对应的top_n张相似图片信息的列表
     :param top_n: 要显示的相似图片数量
     """
     for query_image, top_n_images, top_n_scores in top_n_results:
         fig, axes = plt.subplots(1, top_n + 1, figsize=(3 * (top_n + 1), 3))
         query_img = cv2.cvtColor(cv2.imread(query_image), cv2.COLOR_BGR2RGB)
+        
+        # 获取查询图像的ID
+        query_id = extract_id_from_filename(query_image)
+        
         axes[0].imshow(query_img)
-        axes[0].set_title('Query Image')
+        axes[0].set_title(f'Query ID: {query_id}')
         axes[0].axis('off')
 
         for j, (similar_image, score) in enumerate(zip(top_n_images, top_n_scores)):
             sim_img = cv2.cvtColor(cv2.imread(similar_image), cv2.COLOR_BGR2RGB)
+            
+            # 获取相似图像的ID
+            similar_id = extract_id_from_filename(similar_image)
+            
             axes[j + 1].imshow(sim_img)
-            axes[j + 1].set_title(f'Score: {score:.3f}')
+            axes[j + 1].set_title(f'ID: {similar_id}\nScore: {score:.3f}')
             axes[j + 1].axis('off')
 
+        plt.tight_layout()
         plt.show()
 
 if __name__ == '__main__':
     folder_path = 'datasets/test_images'  # 请替换为实际的文件夹路径
-    top_n = 3  # 可以修改这个值来指定要显示的相似图片数量
+    top_n = 10  # 可以修改这个值来指定要显示的相似图片数量
     image_paths, features = load_features_and_images(folder_path)
     top_n_results = find_top_n_similar(features, image_paths, top_n)
     visualize_results(top_n_results, top_n)
