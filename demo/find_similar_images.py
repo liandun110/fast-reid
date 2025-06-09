@@ -58,6 +58,7 @@ def extract_id_from_filename(filename):
     # 如果无法提取，返回默认值
     return "Unkwonw"
 
+
 def add_green_border(image, border_width=4):
     """
     为图像添加绿色边框
@@ -78,14 +79,19 @@ def add_green_border(image, border_width=4):
     )
     return bordered_image
 
-def visualize_results(top_n_results, top_n):
+
+def visualize_results(top_n_results, top_n, save_dir='visualization_results'):
     """
     可视化结果，显示每张图片和其最相似的top_n张图片，并显示相似度得分和ID
-    相同ID的图像添加绿色边框
+    相同ID的图像添加绿色边框，并保存结果到指定目录
     :param top_n_results: 包含每张图片对应的top_n张相似图片信息的列表
     :param top_n: 要显示的相似图片数量
+    :param save_dir: 保存结果的目录
     """
-    for query_image, top_n_images, top_n_scores in top_n_results:
+    # 创建保存目录
+    os.makedirs(save_dir, exist_ok=True)
+    
+    for i, (query_image, top_n_images, top_n_scores) in enumerate(top_n_results):
         fig, axes = plt.subplots(1, top_n + 1, figsize=(3 * (top_n + 1), 3))
         query_img = cv2.cvtColor(cv2.imread(query_image), cv2.COLOR_BGR2RGB)
         
@@ -114,11 +120,26 @@ def visualize_results(top_n_results, top_n):
             axes[j + 1].axis('off')
 
         plt.tight_layout()
-        plt.show()
+        
+        # 生成保存文件名
+        query_basename = os.path.splitext(os.path.basename(query_image))[0]
+        save_path = os.path.join(save_dir, f'{query_basename}_similarity_results.png')
+        
+        # 保存图像
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"结果已保存至: {save_path}")
+        
+        # 可选：显示图像（如果需要）
+        # plt.show()
+        
+        # 关闭图像以释放内存
+        plt.close()
 
 if __name__ == '__main__':
     folder_path = 'datasets/test_images'  # 请替换为实际的文件夹路径
     top_n = 10  # 可以修改这个值来指定要显示的相似图片数量
+    save_dir = 'visualization_results'  # 保存结果的目录
+    
     image_paths, features = load_features_and_images(folder_path)
     top_n_results = find_top_n_similar(features, image_paths, top_n)
-    visualize_results(top_n_results, top_n)
+    visualize_results(top_n_results, top_n, save_dir)
