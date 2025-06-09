@@ -45,7 +45,6 @@ def extract_id_from_filename(filename):
     例如: 1501_c6s4_001877_00.jpg -> 1501
     """
     basename = os.path.basename(filename)
-    # 假设ID是文件名的前四位数字
     try:
         # 查找第一个下划线的位置
         first_underscore = basename.find('_')
@@ -59,10 +58,30 @@ def extract_id_from_filename(filename):
     # 如果无法提取，返回默认值
     return "Unkwonw"
 
+def add_green_border(image, border_width=4):
+    """
+    为图像添加绿色边框
+    :param image: 输入图像
+    :param border_width: 边框宽度
+    :return: 添加边框后的图像
+    """
+    # 创建一个绿色边框
+    border_color = [0, 255, 0]  # BGR格式的绿色
+    bordered_image = cv2.copyMakeBorder(
+        image,
+        top=border_width,
+        bottom=border_width,
+        left=border_width,
+        right=border_width,
+        borderType=cv2.BORDER_CONSTANT,
+        value=border_color
+    )
+    return bordered_image
 
 def visualize_results(top_n_results, top_n):
     """
     可视化结果，显示每张图片和其最相似的top_n张图片，并显示相似度得分和ID
+    相同ID的图像添加绿色边框
     :param top_n_results: 包含每张图片对应的top_n张相似图片信息的列表
     :param top_n: 要显示的相似图片数量
     """
@@ -78,12 +97,19 @@ def visualize_results(top_n_results, top_n):
         axes[0].axis('off')
 
         for j, (similar_image, score) in enumerate(zip(top_n_images, top_n_scores)):
-            sim_img = cv2.cvtColor(cv2.imread(similar_image), cv2.COLOR_BGR2RGB)
+            sim_img = cv2.imread(similar_image)
             
             # 获取相似图像的ID
             similar_id = extract_id_from_filename(similar_image)
             
-            axes[j + 1].imshow(sim_img)
+            # 如果ID相同，添加绿色边框
+            if similar_id == query_id:
+                sim_img = add_green_border(sim_img)
+            
+            # 转换颜色空间以正确显示
+            sim_img_rgb = cv2.cvtColor(sim_img, cv2.COLOR_BGR2RGB)
+            
+            axes[j + 1].imshow(sim_img_rgb)
             axes[j + 1].set_title(f'ID: {similar_id}\nScore: {score:.3f}')
             axes[j + 1].axis('off')
 
