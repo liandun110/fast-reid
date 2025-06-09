@@ -82,58 +82,45 @@ def add_green_border(image, border_width=4):
 
 def visualize_results(top_n_results, top_n, save_dir='visualization_results'):
     """
-    可视化结果，显示每张图片和其最相似的top_n张图片，并显示相似度得分和ID
-    相同ID的图像添加绿色边框，并保存结果到指定目录
-    :param top_n_results: 包含每张图片对应的top_n张相似图片信息的列表
-    :param top_n: 要显示的相似图片数量
-    :param save_dir: 保存结果的目录
+    可视化结果，显示每张图片和其最相似的top_n张图片，并显示相似度得分和ID。
+    相同ID的图像添加绿色边框，并保存结果到指定目录。
+    :param top_n_results: 每张图片对应的top_n张相似图片信息
+    :param top_n: 相似图像数量
+    :param save_dir: 结果保存路径
     """
-    # 创建保存目录
     os.makedirs(save_dir, exist_ok=True)
     
     for i, (query_image, top_n_images, top_n_scores) in enumerate(top_n_results):
-        fig, axes = plt.subplots(1, top_n + 1, figsize=(3 * (top_n + 1), 3))
+        # 减小图像尺寸和间距
+        fig, axes = plt.subplots(1, top_n + 1, figsize=(2 * (top_n + 1), 2))
+        fig.subplots_adjust(wspace=0.1, hspace=0)  # 减小子图间水平间距
+
+        # 查询图像
         query_img = cv2.cvtColor(cv2.imread(query_image), cv2.COLOR_BGR2RGB)
-        
-        # 获取查询图像的ID
         query_id = extract_id_from_filename(query_image)
-        
         axes[0].imshow(query_img)
-        axes[0].set_title(f'Query ID: {query_id}')
+        axes[0].set_title(f'Query\nID: {query_id}', fontsize=8)
         axes[0].axis('off')
 
         for j, (similar_image, score) in enumerate(zip(top_n_images, top_n_scores)):
             sim_img = cv2.imread(similar_image)
-            
-            # 获取相似图像的ID
             similar_id = extract_id_from_filename(similar_image)
-            
-            # 如果ID相同，添加绿色边框
+
             if similar_id == query_id:
                 sim_img = add_green_border(sim_img)
-            
-            # 转换颜色空间以正确显示
+
             sim_img_rgb = cv2.cvtColor(sim_img, cv2.COLOR_BGR2RGB)
-            
             axes[j + 1].imshow(sim_img_rgb)
-            axes[j + 1].set_title(f'ID: {similar_id}\nScore: {score:.3f}')
+            axes[j + 1].set_title(f'ID: {similar_id}\nScore: {score:.2f}', fontsize=8)
             axes[j + 1].axis('off')
 
-        plt.tight_layout()
-        
-        # 生成保存文件名
+        # 保存结果
         query_basename = os.path.splitext(os.path.basename(query_image))[0]
         save_path = os.path.join(save_dir, f'{query_basename}_similarity_results.png')
-        
-        # 保存图像
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
         print(f"结果已保存至: {save_path}")
-        
-        # 可选：显示图像（如果需要）
-        # plt.show()
-        
-        # 关闭图像以释放内存
         plt.close()
+
 
 if __name__ == '__main__':
     folder_path = 'datasets/test_images'  # 请替换为实际的文件夹路径
