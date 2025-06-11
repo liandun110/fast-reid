@@ -89,10 +89,9 @@ if __name__ == '__main__':
     PathManager.mkdirs(args.output)
     if args.input:
         if PathManager.isdir(args.input[0]):
-            args.input = glob.glob(os.path.expanduser(args.input[0]))
+            args.input = glob.glob(os.path.join(args.input[0], '*.jpg'))
             assert args.input, "The input path(s) was not found"
         for path in tqdm.tqdm(args.input):
-            print(path)
             img = cv2.imread(path)
             feat = demo.run_on_image(img)
             feat = postprocess(feat)
