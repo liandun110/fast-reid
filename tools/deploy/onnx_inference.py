@@ -19,7 +19,7 @@ def get_parser():
 
     parser.add_argument(
         "--model-path",
-        default="onnx_model/baseline.onnx",
+        default="/home/suma/projects/fast-reid/tools/deploy/outputs/onnx_model/baseline_R50.onnx",
         help="onnx model path"
     )
     parser.add_argument(
@@ -28,6 +28,7 @@ def get_parser():
         help="A list of space separated input images; "
              "or a single glob pattern such as 'directory/*.jpg'",
     )
+
     parser.add_argument(
         "--output",
         default='onnx_output',
@@ -75,7 +76,7 @@ if __name__ == "__main__":
     if not os.path.exists(args.output): os.makedirs(args.output)
 
     if args.input:
-        if os.path.isdir(args.input[0]):
+        if os.path.isdir(args.input[0]):  #没有走
             args.input = glob.glob(os.path.expanduser(args.input[0]))
             assert args.input, "The input path(s) was not found"
         for path in tqdm.tqdm(args.input):

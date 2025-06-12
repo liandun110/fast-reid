@@ -1,4 +1,5 @@
 datasets/MOT16
+datasets/MOT16-04-ReID
 datasets/Market-1501-v15.09.15
 logs
 visualization_results
@@ -7,6 +8,8 @@ visualization_results
 __pycache__
 _ext
 *.zip
+*.onnx
+*.mp4
 *.pyc
 *.pyd
 *.so
