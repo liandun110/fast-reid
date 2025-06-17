@@ -1,10 +1,64 @@
 import sys
 import os
+import cv2
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, 
                             QPushButton, QFileDialog, QHBoxLayout,
-                            QVBoxLayout, QSlider, QGridLayout)
-from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt, QTimer
+                            QVBoxLayout, QSlider, QGridLayout, 
+                            QProgressBar, QMessageBox)
+from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
+from ultralytics import YOLO
+
+class DetectionThread(QThread):
+    progress_updated = pyqtSignal(int, int)  # current, total
+    detection_finished = pyqtSignal(str)  # output file path
+    detection_failed = pyqtSignal(str)  # error message
+
+    def __init__(self, seq_path, model_path):
+        super().__init__()
+        self.seq_path = seq_path
+        self.model_path = model_path
+        self._is_running = True
+
+    def run(self):
+        try:
+            img_dir = os.path.join(self.seq_path, 'img1')
+            output_dir = os.path.join(self.seq_path, 'det')
+            os.makedirs(output_dir, exist_ok=True)
+            output_det_file = os.path.join(output_dir, 'det_yolov8x.txt')
+
+            model = YOLO(self.model_path)
+            frame_files = sorted([f for f in os.listdir(img_dir) if f.endswith('.jpg')])
+            total_frames = len(frame_files)
+
+            with open(output_det_file, 'w') as f_out:
+                for frame_id, img_name in enumerate(frame_files, 1):
+                    if not self._is_running:
+                        break
+
+                    img_path = os.path.join(img_dir, img_name)
+                    results = model(img_path, verbose=False)[0]
+
+                    for box in results.boxes:
+                        x1, y1, x2, y2 = box.xyxy[0].tolist()
+                        w = x2 - x1
+                        h = y2 - y1
+                        conf = float(box.conf)
+                        cls = int(box.cls)
+
+                        if cls == 0:  # 行人类别
+                            line = f"{frame_id},-1,{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.4f},-1,-1,-1\n"
+                            f_out.write(line)
+
+                    self.progress_updated.emit(frame_id, total_frames)
+
+            if self._is_running:
+                self.detection_finished.emit(output_det_file)
+        except Exception as e:
+            self.detection_failed.emit(str(e))
+
+    def stop(self):
+        self._is_running = False
 
 class DualFramePlayer(QWidget):
     def __init__(self):
@@ -17,6 +71,10 @@ class DualFramePlayer(QWidget):
         self.playing_right = False
         self.timer_left = QTimer()
         self.timer_right = QTimer()
+        
+        # 检测相关
+        self.detection_thread = None
+        self.detection_model_path = 'yolov8x.pt'  # 默认模型路径
         
         self.init_ui()
         self.timer_left.timeout.connect(self.next_frame_left)
@@ -52,6 +110,24 @@ class DualFramePlayer(QWidget):
         grid_layout.addWidget(self.image_label_right, 1, 1)
         
         main_layout.addLayout(grid_layout)
+        
+        # 检测控制区域
+        detection_layout = QHBoxLayout()
+        
+        self.btn_detect = QPushButton('运行行人检测(左侧)')
+        self.btn_detect.clicked.connect(self.run_detection)
+        detection_layout.addWidget(self.btn_detect)
+        
+        self.btn_stop_detect = QPushButton('停止检测')
+        self.btn_stop_detect.clicked.connect(self.stop_detection)
+        self.btn_stop_detect.setEnabled(False)
+        detection_layout.addWidget(self.btn_stop_detect)
+        
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setAlignment(Qt.AlignCenter)
+        detection_layout.addWidget(self.progress_bar)
+        
+        main_layout.addLayout(detection_layout)
         
         # 控制按钮区域 (左侧)
         left_control_layout = QHBoxLayout()
@@ -126,7 +202,7 @@ class DualFramePlayer(QWidget):
         main_layout.addLayout(sync_layout)
         
         self.setLayout(main_layout)
-        self.setWindowTitle('双帧序列播放器')
+        self.setWindowTitle('双帧序列播放器(带行人检测)')
         self.resize(1200, 800)
     
     def load_frames(self, side):
@@ -147,6 +223,7 @@ class DualFramePlayer(QWidget):
                     self.btn_play_left.setEnabled(True)
                     self.btn_prev_left.setEnabled(True)
                     self.btn_next_left.setEnabled(True)
+                    self.btn_detect.setEnabled(True)
                 else:
                     self.frame_files_right = frame_files
                     self.current_idx_right = 0
@@ -256,6 +333,64 @@ class DualFramePlayer(QWidget):
         self.btn_play_right.setText('播放右侧')
         self.timer_left.stop()
         self.timer_right.stop()
+    
+    def run_detection(self):
+        """运行行人检测"""
+        if not self.frame_files_left:
+            QMessageBox.warning(self, "警告", "请先加载左侧帧序列!")
+            return
+        
+        # 获取序列目录 (假设帧序列在img1子目录中)
+        seq_dir = os.path.dirname(os.path.dirname(self.frame_files_left[0]))
+        
+        # 检查YOLO模型文件
+        if not os.path.exists(self.detection_model_path):
+            model_path, _ = QFileDialog.getOpenFileName(
+                self, "选择YOLO模型文件", "", "PyTorch模型 (*.pt)")
+            if model_path:
+                self.detection_model_path = model_path
+            else:
+                return
+        
+        # 禁用相关按钮
+        self.btn_detect.setEnabled(False)
+        self.btn_stop_detect.setEnabled(True)
+        self.progress_bar.setValue(0)
+        
+        # 创建并启动检测线程
+        self.detection_thread = DetectionThread(seq_dir, self.detection_model_path)
+        self.detection_thread.progress_updated.connect(self.update_detection_progress)
+        self.detection_thread.detection_finished.connect(self.detection_completed)
+        self.detection_thread.detection_failed.connect(self.detection_failed)
+        self.detection_thread.start()
+    
+    def stop_detection(self):
+        """停止检测过程"""
+        if self.detection_thread and self.detection_thread.isRunning():
+            self.detection_thread.stop()
+            self.detection_thread.wait()
+            self.progress_bar.setValue(0)
+            QMessageBox.information(self, "信息", "检测已停止")
+        
+        self.btn_detect.setEnabled(True)
+        self.btn_stop_detect.setEnabled(False)
+    
+    def update_detection_progress(self, current, total):
+        """更新检测进度条"""
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(current)
+    
+    def detection_completed(self, output_file):
+        """检测完成处理"""
+        self.btn_detect.setEnabled(True)
+        self.btn_stop_detect.setEnabled(False)
+        QMessageBox.information(self, "完成", f"行人检测完成!\n结果已保存至:\n{output_file}")
+    
+    def detection_failed(self, error_msg):
+        """检测失败处理"""
+        self.btn_detect.setEnabled(True)
+        self.btn_stop_detect.setEnabled(False)
+        QMessageBox.critical(self, "错误", f"检测过程中发生错误:\n{error_msg}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
