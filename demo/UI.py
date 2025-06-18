@@ -4,20 +4,21 @@ import cv2
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, 
                             QPushButton, QFileDialog, QHBoxLayout,
                             QVBoxLayout, QSlider, QGridLayout, 
-                            QProgressBar, QMessageBox)
+                            QProgressBar, QMessageBox, QGroupBox)
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from ultralytics import YOLO
 
 class DetectionThread(QThread):
-    progress_updated = pyqtSignal(int, int)  # current, total
-    detection_finished = pyqtSignal(str)  # output file path
-    detection_failed = pyqtSignal(str)  # error message
+    progress_updated = pyqtSignal(int, int, str)  # current, total, side
+    detection_finished = pyqtSignal(str, str)  # output file path, side
+    detection_failed = pyqtSignal(str, str)  # error message, side
 
-    def __init__(self, seq_path, model_path):
+    def __init__(self, seq_path, model_path, side):
         super().__init__()
         self.seq_path = seq_path
         self.model_path = model_path
+        self.side = side
         self._is_running = True
 
     def run(self):
@@ -25,7 +26,7 @@ class DetectionThread(QThread):
             img_dir = os.path.join(self.seq_path, 'img1')
             output_dir = os.path.join(self.seq_path, 'det')
             os.makedirs(output_dir, exist_ok=True)
-            output_det_file = os.path.join(output_dir, 'det_yolov8x.txt')
+            output_det_file = os.path.join(output_dir, f'det_yolov8x_{self.side}.txt')
 
             model = YOLO(self.model_path)
             frame_files = sorted([f for f in os.listdir(img_dir) if f.endswith('.jpg')])
@@ -50,12 +51,12 @@ class DetectionThread(QThread):
                             line = f"{frame_id},-1,{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.4f},-1,-1,-1\n"
                             f_out.write(line)
 
-                    self.progress_updated.emit(frame_id, total_frames)
+                    self.progress_updated.emit(frame_id, total_frames, self.side)
 
             if self._is_running:
-                self.detection_finished.emit(output_det_file)
+                self.detection_finished.emit(output_det_file, self.side)
         except Exception as e:
-            self.detection_failed.emit(str(e))
+            self.detection_failed.emit(str(e), self.side)
 
     def stop(self):
         self._is_running = False
@@ -73,7 +74,8 @@ class DualFramePlayer(QWidget):
         self.timer_right = QTimer()
         
         # 检测相关
-        self.detection_thread = None
+        self.detection_thread_left = None
+        self.detection_thread_right = None
         self.detection_model_path = 'yolov8x.pt'  # 默认模型路径
         
         self.init_ui()
@@ -88,55 +90,73 @@ class DualFramePlayer(QWidget):
         grid_layout = QGridLayout()
         
         # 左侧帧序列
-        self.left_label = QLabel("左侧帧序列")
-        self.left_label.setAlignment(Qt.AlignCenter)
-        self.left_label.setStyleSheet("font-weight: bold;")
-        grid_layout.addWidget(self.left_label, 0, 0)
+        left_group = QGroupBox("左侧帧序列")
+        left_layout = QVBoxLayout()
         
         self.image_label_left = QLabel()
         self.image_label_left.setAlignment(Qt.AlignCenter)
         self.image_label_left.setMinimumSize(640, 480)
-        grid_layout.addWidget(self.image_label_left, 1, 0)
+        left_layout.addWidget(self.image_label_left)
+        
+        # 左侧检测控制
+        left_detect_layout = QHBoxLayout()
+        
+        self.btn_detect_left = QPushButton('运行行人检测')
+        self.btn_detect_left.clicked.connect(lambda: self.run_detection('left'))
+        left_detect_layout.addWidget(self.btn_detect_left)
+        
+        self.btn_stop_detect_left = QPushButton('停止检测')
+        self.btn_stop_detect_left.clicked.connect(lambda: self.stop_detection('left'))
+        self.btn_stop_detect_left.setEnabled(False)
+        left_detect_layout.addWidget(self.btn_stop_detect_left)
+        
+        self.progress_left = QProgressBar()
+        self.progress_left.setAlignment(Qt.AlignCenter)
+        left_detect_layout.addWidget(self.progress_left)
+        
+        left_layout.addLayout(left_detect_layout)
+        left_group.setLayout(left_layout)
+        grid_layout.addWidget(left_group, 0, 0)
         
         # 右侧帧序列
-        self.right_label = QLabel("右侧帧序列")
-        self.right_label.setAlignment(Qt.AlignCenter)
-        self.right_label.setStyleSheet("font-weight: bold;")
-        grid_layout.addWidget(self.right_label, 0, 1)
+        right_group = QGroupBox("右侧帧序列")
+        right_layout = QVBoxLayout()
         
         self.image_label_right = QLabel()
         self.image_label_right.setAlignment(Qt.AlignCenter)
         self.image_label_right.setMinimumSize(640, 480)
-        grid_layout.addWidget(self.image_label_right, 1, 1)
+        right_layout.addWidget(self.image_label_right)
+        
+        # 右侧检测控制
+        right_detect_layout = QHBoxLayout()
+        
+        self.btn_detect_right = QPushButton('运行行人检测')
+        self.btn_detect_right.clicked.connect(lambda: self.run_detection('right'))
+        right_detect_layout.addWidget(self.btn_detect_right)
+        
+        self.btn_stop_detect_right = QPushButton('停止检测')
+        self.btn_stop_detect_right.clicked.connect(lambda: self.stop_detection('right'))
+        self.btn_stop_detect_right.setEnabled(False)
+        right_detect_layout.addWidget(self.btn_stop_detect_right)
+        
+        self.progress_right = QProgressBar()
+        self.progress_right.setAlignment(Qt.AlignCenter)
+        right_detect_layout.addWidget(self.progress_right)
+        
+        right_layout.addLayout(right_detect_layout)
+        right_group.setLayout(right_layout)
+        grid_layout.addWidget(right_group, 0, 1)
         
         main_layout.addLayout(grid_layout)
-        
-        # 检测控制区域
-        detection_layout = QHBoxLayout()
-        
-        self.btn_detect = QPushButton('运行行人检测(左侧)')
-        self.btn_detect.clicked.connect(self.run_detection)
-        detection_layout.addWidget(self.btn_detect)
-        
-        self.btn_stop_detect = QPushButton('停止检测')
-        self.btn_stop_detect.clicked.connect(self.stop_detection)
-        self.btn_stop_detect.setEnabled(False)
-        detection_layout.addWidget(self.btn_stop_detect)
-        
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setAlignment(Qt.AlignCenter)
-        detection_layout.addWidget(self.progress_bar)
-        
-        main_layout.addLayout(detection_layout)
         
         # 控制按钮区域 (左侧)
         left_control_layout = QHBoxLayout()
         
-        self.btn_load_left = QPushButton('加载左侧帧序列')
+        self.btn_load_left = QPushButton('加载序列')
         self.btn_load_left.clicked.connect(lambda: self.load_frames('left'))
         left_control_layout.addWidget(self.btn_load_left)
         
-        self.btn_play_left = QPushButton('播放左侧')
+        self.btn_play_left = QPushButton('播放')
         self.btn_play_left.clicked.connect(lambda: self.toggle_play('left'))
         self.btn_play_left.setEnabled(False)
         left_control_layout.addWidget(self.btn_play_left)
@@ -161,11 +181,11 @@ class DualFramePlayer(QWidget):
         # 控制按钮区域 (右侧)
         right_control_layout = QHBoxLayout()
         
-        self.btn_load_right = QPushButton('加载右侧帧序列')
+        self.btn_load_right = QPushButton('加载序列')
         self.btn_load_right.clicked.connect(lambda: self.load_frames('right'))
         right_control_layout.addWidget(self.btn_load_right)
         
-        self.btn_play_right = QPushButton('播放右侧')
+        self.btn_play_right = QPushButton('播放')
         self.btn_play_right.clicked.connect(lambda: self.toggle_play('right'))
         self.btn_play_right.setEnabled(False)
         right_control_layout.addWidget(self.btn_play_right)
@@ -203,7 +223,7 @@ class DualFramePlayer(QWidget):
         
         self.setLayout(main_layout)
         self.setWindowTitle('双帧序列播放器(带行人检测)')
-        self.resize(1200, 800)
+        self.resize(1400, 900)
     
     def load_frames(self, side):
         """选择包含帧序列的文件夹"""
@@ -223,7 +243,7 @@ class DualFramePlayer(QWidget):
                     self.btn_play_left.setEnabled(True)
                     self.btn_prev_left.setEnabled(True)
                     self.btn_next_left.setEnabled(True)
-                    self.btn_detect.setEnabled(True)
+                    self.btn_detect_left.setEnabled(True)
                 else:
                     self.frame_files_right = frame_files
                     self.current_idx_right = 0
@@ -231,6 +251,7 @@ class DualFramePlayer(QWidget):
                     self.btn_play_right.setEnabled(True)
                     self.btn_prev_right.setEnabled(True)
                     self.btn_next_right.setEnabled(True)
+                    self.btn_detect_right.setEnabled(True)
                 
                 # 如果两侧都加载了序列，启用同步控制
                 if self.frame_files_left and self.frame_files_right:
@@ -262,7 +283,7 @@ class DualFramePlayer(QWidget):
         """切换播放/暂停状态"""
         if side == 'left':
             self.playing_left = not self.playing_left
-            self.btn_play_left.setText('暂停左侧' if self.playing_left else '播放左侧')
+            self.btn_play_left.setText('暂停' if self.playing_left else '播放')
             
             if self.playing_left:
                 self.timer_left.start(100)  # 100ms = 10fps
@@ -270,7 +291,7 @@ class DualFramePlayer(QWidget):
                 self.timer_left.stop()
         else:
             self.playing_right = not self.playing_right
-            self.btn_play_right.setText('暂停右侧' if self.playing_right else '播放右侧')
+            self.btn_play_right.setText('暂停' if self.playing_right else '播放')
             
             if self.playing_right:
                 self.timer_right.start(100)  # 100ms = 10fps
@@ -320,8 +341,8 @@ class DualFramePlayer(QWidget):
         """同步播放两侧序列"""
         self.playing_left = True
         self.playing_right = True
-        self.btn_play_left.setText('暂停左侧')
-        self.btn_play_right.setText('暂停右侧')
+        self.btn_play_left.setText('暂停')
+        self.btn_play_right.setText('暂停')
         self.timer_left.start(100)
         self.timer_right.start(100)
     
@@ -329,19 +350,20 @@ class DualFramePlayer(QWidget):
         """同步停止两侧序列"""
         self.playing_left = False
         self.playing_right = False
-        self.btn_play_left.setText('播放左侧')
-        self.btn_play_right.setText('播放右侧')
+        self.btn_play_left.setText('播放')
+        self.btn_play_right.setText('播放')
         self.timer_left.stop()
         self.timer_right.stop()
     
-    def run_detection(self):
+    def run_detection(self, side):
         """运行行人检测"""
-        if not self.frame_files_left:
-            QMessageBox.warning(self, "警告", "请先加载左侧帧序列!")
+        frame_files = self.frame_files_left if side == 'left' else self.frame_files_right
+        if not frame_files:
+            QMessageBox.warning(self, "警告", f"请先加载{side}侧帧序列!")
             return
         
         # 获取序列目录 (假设帧序列在img1子目录中)
-        seq_dir = os.path.dirname(os.path.dirname(self.frame_files_left[0]))
+        seq_dir = os.path.dirname(os.path.dirname(frame_files[0]))
         
         # 检查YOLO模型文件
         if not os.path.exists(self.detection_model_path):
@@ -353,44 +375,80 @@ class DualFramePlayer(QWidget):
                 return
         
         # 禁用相关按钮
-        self.btn_detect.setEnabled(False)
-        self.btn_stop_detect.setEnabled(True)
-        self.progress_bar.setValue(0)
+        if side == 'left':
+            self.btn_detect_left.setEnabled(False)
+            self.btn_stop_detect_left.setEnabled(True)
+            self.progress_left.setValue(0)
+        else:
+            self.btn_detect_right.setEnabled(False)
+            self.btn_stop_detect_right.setEnabled(True)
+            self.progress_right.setValue(0)
         
         # 创建并启动检测线程
-        self.detection_thread = DetectionThread(seq_dir, self.detection_model_path)
-        self.detection_thread.progress_updated.connect(self.update_detection_progress)
-        self.detection_thread.detection_finished.connect(self.detection_completed)
-        self.detection_thread.detection_failed.connect(self.detection_failed)
-        self.detection_thread.start()
+        if side == 'left':
+            self.detection_thread_left = DetectionThread(seq_dir, self.detection_model_path, side)
+            self.detection_thread_left.progress_updated.connect(self.update_detection_progress)
+            self.detection_thread_left.detection_finished.connect(self.detection_completed)
+            self.detection_thread_left.detection_failed.connect(self.detection_failed)
+            self.detection_thread_left.start()
+        else:
+            self.detection_thread_right = DetectionThread(seq_dir, self.detection_model_path, side)
+            self.detection_thread_right.progress_updated.connect(self.update_detection_progress)
+            self.detection_thread_right.detection_finished.connect(self.detection_completed)
+            self.detection_thread_right.detection_failed.connect(self.detection_failed)
+            self.detection_thread_right.start()
     
-    def stop_detection(self):
+    def stop_detection(self, side):
         """停止检测过程"""
-        if self.detection_thread and self.detection_thread.isRunning():
-            self.detection_thread.stop()
-            self.detection_thread.wait()
-            self.progress_bar.setValue(0)
-            QMessageBox.information(self, "信息", "检测已停止")
-        
-        self.btn_detect.setEnabled(True)
-        self.btn_stop_detect.setEnabled(False)
+        if side == 'left':
+            if self.detection_thread_left and self.detection_thread_left.isRunning():
+                self.detection_thread_left.stop()
+                self.detection_thread_left.wait()
+                self.progress_left.setValue(0)
+                QMessageBox.information(self, "信息", "左侧检测已停止")
+            
+            self.btn_detect_left.setEnabled(True)
+            self.btn_stop_detect_left.setEnabled(False)
+        else:
+            if self.detection_thread_right and self.detection_thread_right.isRunning():
+                self.detection_thread_right.stop()
+                self.detection_thread_right.wait()
+                self.progress_right.setValue(0)
+                QMessageBox.information(self, "信息", "右侧检测已停止")
+            
+            self.btn_detect_right.setEnabled(True)
+            self.btn_stop_detect_right.setEnabled(False)
     
-    def update_detection_progress(self, current, total):
+    def update_detection_progress(self, current, total, side):
         """更新检测进度条"""
-        self.progress_bar.setMaximum(total)
-        self.progress_bar.setValue(current)
+        if side == 'left':
+            self.progress_left.setMaximum(total)
+            self.progress_left.setValue(current)
+        else:
+            self.progress_right.setMaximum(total)
+            self.progress_right.setValue(current)
     
-    def detection_completed(self, output_file):
+    def detection_completed(self, output_file, side):
         """检测完成处理"""
-        self.btn_detect.setEnabled(True)
-        self.btn_stop_detect.setEnabled(False)
-        QMessageBox.information(self, "完成", f"行人检测完成!\n结果已保存至:\n{output_file}")
+        if side == 'left':
+            self.btn_detect_left.setEnabled(True)
+            self.btn_stop_detect_left.setEnabled(False)
+        else:
+            self.btn_detect_right.setEnabled(True)
+            self.btn_stop_detect_right.setEnabled(False)
+            
+        QMessageBox.information(self, "完成", f"{side}侧行人检测完成!\n结果已保存至:\n{output_file}")
     
-    def detection_failed(self, error_msg):
+    def detection_failed(self, error_msg, side):
         """检测失败处理"""
-        self.btn_detect.setEnabled(True)
-        self.btn_stop_detect.setEnabled(False)
-        QMessageBox.critical(self, "错误", f"检测过程中发生错误:\n{error_msg}")
+        if side == 'left':
+            self.btn_detect_left.setEnabled(True)
+            self.btn_stop_detect_left.setEnabled(False)
+        else:
+            self.btn_detect_right.setEnabled(True)
+            self.btn_stop_detect_right.setEnabled(False)
+            
+        QMessageBox.critical(self, "错误", f"{side}侧检测过程中发生错误:\n{error_msg}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
