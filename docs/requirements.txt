@@ -18,3 +18,6 @@ scikit-learn
 tabulate
 gdown
 faiss-gpu
+PyQt5
+ultralytics  # 会自动安装pytorch
+opencv-python==4.1.2.30  # 高版本会与qt冲突

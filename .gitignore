@@ -1,4 +1,5 @@
 datasets/MOT16
+datasets/yisuo
 datasets/MOT16-04-ReID
 datasets/Market-1501-v15.09.15
 logs
