@@ -3,7 +3,7 @@ import cv2
 from ultralytics import YOLO
 from tqdm import tqdm
 
-def person_detect(img_dir, model_path='yolov8x.pt', output_dir=None):
+def person_detect(seq_path, model_path='yolov8x.pt', output_dir=None):
     """
     使用YOLOv8模型对MOT16格式的序列进行行人检测
     
@@ -11,13 +11,15 @@ def person_detect(img_dir, model_path='yolov8x.pt', output_dir=None):
         model_path (str): YOLO模型路径，默认为'yolov8x.pt'
         output_dir (str): 输出文件夹路径，默认为None（自动在seq_path下创建det目录）
     """
+    img_dir = os.path.join(seq_path, 'img1')
+    
     # 输入输出路径处理
     if not os.path.exists(img_dir):
         raise FileNotFoundError(f"图像目录不存在: {img_dir}")
-    
+
     # 确定输出文件路径
     if output_dir is None:
-        output_dir = os.path.join(seq_path, '../det')
+        output_dir = os.path.join(seq_path, 'det')
     os.makedirs(output_dir, exist_ok=True)
     output_det_file = os.path.join(output_dir, 'det_yolov8x.txt')
     
@@ -59,5 +61,5 @@ def person_detect(img_dir, model_path='yolov8x.pt', output_dir=None):
 # 示例调用
 if __name__ == "__main__":
     # 请替换为实际路径
-    seq_path = 'datasets/yisuo/人脸追踪01/images'
+    seq_path = 'datasets/yisuo/人脸追踪02/'
     person_detect(seq_path)    

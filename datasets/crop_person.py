@@ -29,10 +29,10 @@ def save_cropped_pedestrians(args):
     print(f"开始处理序列: {args.seq_path}")
     print(f"总帧数: {total_frames}")
     print(f"检测文件: {det_path}")
-    print(f"最小置信度阈值: {args.min_conf}")
     
     # 创建输出目录
-    os.makedirs(args.output, exist_ok=True)
+    output = os.path.join(args.seq_path, 'person_crops')
+    os.makedirs(output, exist_ok=True)
     
     # 处理每一帧
     for frame_file in tqdm(frame_files):
@@ -80,18 +80,17 @@ def save_cropped_pedestrians(args):
             # 构建输出文件名
             person_id_str = f"{pid:06d}"  # 使用6位ID以避免冲突
             filename = f"{person_id_str}_c1s1_{frame_name}_{conf:.4f}.jpg"
-            save_path = os.path.join(args.output, filename)
+            save_path = os.path.join(output, filename)
             
             # 保存裁剪结果
             cv2.imwrite(save_path, cropped)
     
-    print(f"✅ 处理完成，共裁剪出 {len(os.listdir(args.output))} 个行人图像")
-    print(f"保存路径: {args.output}")
+    print(f"✅ 处理完成，共裁剪出 {len(os.listdir(output))} 个行人图像")
+    print(f"保存路径: {output}")
 
 def get_parser():
     parser = argparse.ArgumentParser(description="根据YOLOv8检测结果裁剪行人图像")
-    parser.add_argument("--seq_path", default="datasets/yisuo/人脸追踪01", help="MOT16序列路径")
-    parser.add_argument("--output", default="datasets/yisuo/人脸追踪01/person_crops", help="裁剪图像保存目录")
+    parser.add_argument("--seq_path", default="datasets/yisuo/人脸追踪02", help="图像序列路径")
     parser.add_argument("--min_conf", type=float, default=0.5, help="最小置信度阈值")
     return parser
 
