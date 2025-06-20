@@ -12,7 +12,10 @@ def save_cropped_pedestrians(args):
     
     # 读取检测结果，使用合适的列名
     det_df = pd.read_csv(det_path, header=None)
-    det_df.columns = ['frame', 'id', 'x', 'y', 'w', 'h', 'conf', 'class', 'vis', 'direction']
+    det_df.columns = ['frame', 'id', 'x', 'y', 'w', 'h', 'conf', 'class', 'vis', 'detection_id']
+    
+    # 应用置信度阈值过滤
+    det_df = det_df[det_df['conf'] >= args.min_conf]
     
     # 确定图像目录
     img_dir = os.path.join(args.seq_path, 'img1')  # MOT16标准目录结构为img1
@@ -29,6 +32,7 @@ def save_cropped_pedestrians(args):
     print(f"开始处理序列: {args.seq_path}")
     print(f"总帧数: {total_frames}")
     print(f"检测文件: {det_path}")
+    print(f"最小置信度: {args.min_conf}")
     
     # 创建输出目录
     output = os.path.join(args.seq_path, 'person_crops')
@@ -61,10 +65,10 @@ def save_cropped_pedestrians(args):
         # 获取当前帧的所有检测结果
         frame_dets = det_df[det_df['frame'] == frame_id]
         
-        # 为每个检测结果生成唯一ID（使用帧号和检测索引组合）
-        for det_idx, row in frame_dets.iterrows():
-            # 使用帧号和检测索引生成唯一ID
-            pid = int(f"{frame_id}{det_idx % 1000:03d}")
+        # 处理每个检测结果
+        for _, row in frame_dets.iterrows():
+            # 使用检测文件中的detection_id作为唯一标识符
+            detection_id = int(row['detection_id'])
             x, y, w, h = map(int, [row['x'], row['y'], row['w'], row['h']])
             conf = float(row['conf'])
             
@@ -78,8 +82,8 @@ def save_cropped_pedestrians(args):
                 continue
             
             # 构建输出文件名
-            person_id_str = f"{pid:06d}"  # 使用6位ID以避免冲突
-            filename = f"{person_id_str}_c1s1_{frame_name}_{conf:.4f}.jpg"
+            # 使用detection_id作为唯一ID，格式化为6位数字
+            filename = f"{detection_id:06d}_c1s1_{frame_name}_{conf:.4f}.jpg"
             save_path = os.path.join(output, filename)
             
             # 保存裁剪结果
@@ -90,8 +94,9 @@ def save_cropped_pedestrians(args):
 
 def get_parser():
     parser = argparse.ArgumentParser(description="根据YOLOv8检测结果裁剪行人图像")
-    parser.add_argument("--seq_path", default="datasets/yisuo/人脸追踪02", help="图像序列路径")
-    parser.add_argument("--min_conf", type=float, default=0.5, help="最小置信度阈值")
+    parser.add_argument("--seq_path", required=True, help="图像序列路径")
+    parser.add_argument("--min_conf", type=float, default=0.0, 
+                       help="最小置信度阈值，低于此值的检测将被忽略")
     return parser
 
 if __name__ == "__main__":
