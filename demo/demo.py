@@ -55,7 +55,7 @@ def get_parser():
         help='If use multiprocess for feature extraction.'
     )
     parser.add_argument(
-        "--seq-path",
+        "--seq_path",
         default='datasets/yisuo/人脸追踪01/',
         help="Base sequence path containing person_crops folder"
     )

@@ -1,3 +1,15 @@
+## Added by zhbli
+
+### 数据集组织方式
+
+```bash
+- seq_path
+  - img1  # ffmpeg -i 人脸追踪*.mp4 -f image2 -vcodec mjpeg -qscale:v 2 images/%06d.jpg
+  - det  # python datasets/person_detect.py --seq_path=seq_path
+  - person_crops  # python datasets/crop_person.py --seq_path-seq_path
+  - reid_features  # python demo/demo.py --seq-path=seq_path
+```
+
 <img src=".github/FastReID-Logo.png" width="300" >
 
 [![Gitter](https://badges.gitter.im/fast-reid/community.svg)](https://gitter.im/fast-reid/community?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge)
