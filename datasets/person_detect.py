@@ -1,5 +1,6 @@
 import os
 import cv2
+import argparse
 from ultralytics import YOLO
 from tqdm import tqdm
 
@@ -8,8 +9,12 @@ def person_detect(seq_path, model_path='yolov8x.pt', output_dir=None):
     使用YOLOv8模型对MOT16格式的序列进行行人检测
     
     参数:
+        seq_path (str): 序列路径，包含img1子目录
         model_path (str): YOLO模型路径，默认为'yolov8x.pt'
         output_dir (str): 输出文件夹路径，默认为None（自动在seq_path下创建det目录）
+    
+    返回:
+        str: 生成的检测文件路径
     """
     img_dir = os.path.join(seq_path, 'img1')
     
@@ -24,7 +29,7 @@ def person_detect(seq_path, model_path='yolov8x.pt', output_dir=None):
     output_det_file = os.path.join(output_dir, 'det_yolov8x.txt')
     
     # 加载模型
-    model = YOLO('datasets/yolov8x.pt')
+    model = YOLO(model_path)
     
     # 处理所有帧
     with open(output_det_file, 'w') as f_out:
@@ -35,6 +40,9 @@ def person_detect(seq_path, model_path='yolov8x.pt', output_dir=None):
         print(f"总帧数: {total_frames}")
         print(f"模型: {model_path}")
         print(f"输出路径: {output_det_file}")
+        
+        # 用于生成唯一ID的计数器
+        detection_id = 0
         
         for frame_id, img_name in tqdm(enumerate(frame_files, 1), total=total_frames):
             img_path = os.path.join(img_dir, img_name)
@@ -52,14 +60,26 @@ def person_detect(seq_path, model_path='yolov8x.pt', output_dir=None):
                 
                 # 仅保留行人类别（YOLO中通常是class==0）
                 if cls == 0:
-                    line = f"{frame_id},-1,{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.4f},-1,-1,-1\n"
+                    line = f"{frame_id},-1,{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.4f},-1,-1,{detection_id}\n"
                     f_out.write(line)
+                    detection_id += 1  # 递增ID
     
     print(f"✅ 新的检测结果已保存至 {output_det_file}")
     return output_det_file
 
-# 示例调用
+
 if __name__ == "__main__":
-    # 请替换为实际路径
-    seq_path = 'datasets/yisuo/人脸追踪02/'
-    person_detect(seq_path)    
+    # 设置命令行参数
+    parser = argparse.ArgumentParser(description='使用YOLOv8进行行人检测')
+    parser.add_argument('--seq_path', type=str, required=True, help='序列路径，包含img1子目录')
+    parser.add_argument('--model_path', type=str, default='datasets/yolov8x.pt', help='YOLO模型路径')
+    parser.add_argument('--output_dir', type=str, default=None, help='输出目录')
+    
+    args = parser.parse_args()
+    
+    # 调用检测函数
+    person_detect(
+        seq_path=args.seq_path,
+        model_path=args.model_path,
+        output_dir=args.output_dir
+    )
