@@ -1,475 +1,503 @@
-"""功能描述
-1. 数据集组织方式
-- seq_path
-  - img1  # ffmpeg -i 人脸追踪*.mp4 -f image2 -vcodec mjpeg -qscale:v 2 images/%06d.jpg
-  - det  # python datasets/person_detect.py --seq_path=seq_path
-  - person_crops  # python datasets/crop_person.py --seq_path-seq_path
-  - reid_features  # python demo/demo.py --seq-path=seq_path
-
-2. 指定seq_path后，自动获取上述各项信息。
-
-3. 鼠标点击画面左侧某个行人（query person），自动显示其行人框。（这种显示是必要的。因为如果点击后没显示出行人框，说明目标检测器根本没有找到这个人，后续所有操作都是无意义的。也为后续工作人员始终关注这个人提供便利。）
-
-4. 将query person子图（从person_crops中获取）展示在UI下方，从reid_features文件夹中获取其特征，并与右侧视频所有特征计算相似度，同样在UI下方展示若干得分最高的candidate persons及相关信息，如帧号、得分.
-
-5. 点击某个candidate person，右侧视频自动跳转到对应帧，并在相应行人上绘制边框。
-"""
-
-
 import sys
 import os
+import glob
+import numpy as np
 import cv2
-from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, 
-                            QPushButton, QFileDialog, QHBoxLayout,
-                            QVBoxLayout, QSlider, QGridLayout, 
-                            QProgressBar, QMessageBox, QGroupBox)
-from PyQt5.QtGui import QPixmap, QImage
-from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
-from ultralytics import YOLO
+from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QFileDialog, 
+                            QHBoxLayout, QVBoxLayout, QSlider, QGridLayout, QGroupBox,
+                            QMessageBox, QListWidget)
+from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QFont, QImage
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QRect
+from scipy.spatial.distance import cdist
 
-class DetectionThread(QThread):
-    progress_updated = pyqtSignal(int, int, str)  # current, total, side
-    detection_finished = pyqtSignal(str, str)  # output file path, side
-    detection_failed = pyqtSignal(str, str)  # error message, side
+class ClickableLabel(QLabel):
+    clicked = pyqtSignal(QPoint)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setStyleSheet("background-color: #222;")
+        self.setAlignment(Qt.AlignCenter)
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(event.pos())
+        super().mousePressEvent(event)
 
-    def __init__(self, seq_path, model_path, side):
-        super().__init__()
-        self.seq_path = seq_path
-        self.model_path = model_path
-        self.side = side
-        self._is_running = True
-
-    def run(self):
-        try:
-            img_dir = os.path.join(self.seq_path, 'img1')
-            output_dir = os.path.join(self.seq_path, 'det')
-            os.makedirs(output_dir, exist_ok=True)
-            output_det_file = os.path.join(output_dir, f'det_yolov8x_{self.side}.txt')
-
-            model = YOLO(self.model_path)
-            frame_files = sorted([f for f in os.listdir(img_dir) if f.endswith('.jpg')])
-            total_frames = len(frame_files)
-
-            with open(output_det_file, 'w') as f_out:
-                for frame_id, img_name in enumerate(frame_files, 1):
-                    if not self._is_running:
-                        break
-
-                    img_path = os.path.join(img_dir, img_name)
-                    results = model(img_path, verbose=False)[0]
-
-                    for box in results.boxes:
-                        x1, y1, x2, y2 = box.xyxy[0].tolist()
-                        w = x2 - x1
-                        h = y2 - y1
-                        conf = float(box.conf)
-                        cls = int(box.cls)
-
-                        if cls == 0:  # 行人类别
-                            line = f"{frame_id},-1,{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.4f},-1,-1,-1\n"
-                            f_out.write(line)
-
-                    self.progress_updated.emit(frame_id, total_frames, self.side)
-
-            if self._is_running:
-                self.detection_finished.emit(output_det_file, self.side)
-        except Exception as e:
-            self.detection_failed.emit(str(e), self.side)
-
-    def stop(self):
-        self._is_running = False
-
-class DualFramePlayer(QWidget):
+class PersonSearchApp(QWidget):
     def __init__(self):
         super().__init__()
-        self.frame_files_left = []
-        self.frame_files_right = []
-        self.current_idx_left = 0
-        self.current_idx_right = 0
-        self.playing_left = False
-        self.playing_right = False
-        self.timer_left = QTimer()
-        self.timer_right = QTimer()
-        
-        # 检测相关
-        self.detection_thread_left = None
-        self.detection_thread_right = None
-        self.detection_model_path = 'yolov8x.pt'  # 默认模型路径
+        self.seq_path_left = None
+        self.seq_path_right = None
+        self.detections_left = {}
+        self.detections_right = {}
+        self.current_query = None
+        self.candidate_persons = []
+        self.current_left_frame = 1
+        self.current_right_frame = 1
+        self.original_img_size = {}  # 存储原始图像尺寸 (width, height)
         
         self.init_ui()
-        self.timer_left.timeout.connect(self.next_frame_left)
-        self.timer_right.timeout.connect(self.next_frame_right)
         
     def init_ui(self):
+        self.setWindowTitle('跨视频行人搜索系统 (YOLO坐标格式)')
+        self.resize(1400, 900)
+        
         # 主布局
         main_layout = QVBoxLayout()
         
-        # 图像显示区域 (使用网格布局)
-        grid_layout = QGridLayout()
+        # 序列选择区域
+        seq_select_layout = QHBoxLayout()
         
-        # 左侧帧序列
-        left_group = QGroupBox("左侧帧序列")
-        left_layout = QVBoxLayout()
+        # 左侧序列选择
+        left_seq_group = QGroupBox("左侧查询视频")
+        left_seq_layout = QVBoxLayout()
+        self.btn_load_left = QPushButton('加载左侧序列')
+        self.btn_load_left.clicked.connect(lambda: self.load_sequence('left'))
+        left_seq_layout.addWidget(self.btn_load_left)
+        self.left_seq_label = QLabel('未加载')
+        left_seq_layout.addWidget(self.left_seq_label)
+        left_seq_group.setLayout(left_seq_layout)
+        seq_select_layout.addWidget(left_seq_group)
         
-        self.image_label_left = QLabel()
-        self.image_label_left.setAlignment(Qt.AlignCenter)
-        self.image_label_left.setMinimumSize(640, 480)
-        left_layout.addWidget(self.image_label_left)
+        # 右侧序列选择
+        right_seq_group = QGroupBox("右侧检索视频")
+        right_seq_layout = QVBoxLayout()
+        self.btn_load_right = QPushButton('加载右侧序列')
+        self.btn_load_right.clicked.connect(lambda: self.load_sequence('right'))
+        right_seq_layout.addWidget(self.btn_load_right)
+        self.right_seq_label = QLabel('未加载')
+        right_seq_layout.addWidget(self.right_seq_label)
+        right_seq_group.setLayout(right_seq_layout)
+        seq_select_layout.addWidget(right_seq_group)
         
-        # 左侧检测控制
-        left_detect_layout = QHBoxLayout()
+        main_layout.addLayout(seq_select_layout)
         
-        self.btn_detect_left = QPushButton('运行行人检测')
-        self.btn_detect_left.clicked.connect(lambda: self.run_detection('left'))
-        left_detect_layout.addWidget(self.btn_detect_left)
+        # 视频显示区域
+        video_layout = QHBoxLayout()
         
-        self.btn_stop_detect_left = QPushButton('停止检测')
-        self.btn_stop_detect_left.clicked.connect(lambda: self.stop_detection('left'))
-        self.btn_stop_detect_left.setEnabled(False)
-        left_detect_layout.addWidget(self.btn_stop_detect_left)
+        # 左侧视频
+        left_video_group = QGroupBox("查询视频 (点击选择行人)")
+        left_video_layout = QVBoxLayout()
+        self.left_image_label = ClickableLabel()
+        self.left_image_label.setMinimumSize(640, 480)
+        self.left_image_label.clicked.connect(self.handle_left_click)
+        left_video_layout.addWidget(self.left_image_label)
         
-        self.progress_left = QProgressBar()
-        self.progress_left.setAlignment(Qt.AlignCenter)
-        left_detect_layout.addWidget(self.progress_left)
-        
-        left_layout.addLayout(left_detect_layout)
-        left_group.setLayout(left_layout)
-        grid_layout.addWidget(left_group, 0, 0)
-        
-        # 右侧帧序列
-        right_group = QGroupBox("右侧帧序列")
-        right_layout = QVBoxLayout()
-        
-        self.image_label_right = QLabel()
-        self.image_label_right.setAlignment(Qt.AlignCenter)
-        self.image_label_right.setMinimumSize(640, 480)
-        right_layout.addWidget(self.image_label_right)
-        
-        # 右侧检测控制
-        right_detect_layout = QHBoxLayout()
-        
-        self.btn_detect_right = QPushButton('运行行人检测')
-        self.btn_detect_right.clicked.connect(lambda: self.run_detection('right'))
-        right_detect_layout.addWidget(self.btn_detect_right)
-        
-        self.btn_stop_detect_right = QPushButton('停止检测')
-        self.btn_stop_detect_right.clicked.connect(lambda: self.stop_detection('right'))
-        self.btn_stop_detect_right.setEnabled(False)
-        right_detect_layout.addWidget(self.btn_stop_detect_right)
-        
-        self.progress_right = QProgressBar()
-        self.progress_right.setAlignment(Qt.AlignCenter)
-        right_detect_layout.addWidget(self.progress_right)
-        
-        right_layout.addLayout(right_detect_layout)
-        right_group.setLayout(right_layout)
-        grid_layout.addWidget(right_group, 0, 1)
-        
-        main_layout.addLayout(grid_layout)
-        
-        # 控制按钮区域 (左侧)
-        left_control_layout = QHBoxLayout()
-        
-        self.btn_load_left = QPushButton('加载序列')
-        self.btn_load_left.clicked.connect(lambda: self.load_frames('left'))
-        left_control_layout.addWidget(self.btn_load_left)
-        
-        self.btn_play_left = QPushButton('播放')
-        self.btn_play_left.clicked.connect(lambda: self.toggle_play('left'))
-        self.btn_play_left.setEnabled(False)
-        left_control_layout.addWidget(self.btn_play_left)
-        
+        # 左侧控制
+        left_control = QHBoxLayout()
         self.btn_prev_left = QPushButton('上一帧')
-        self.btn_prev_left.clicked.connect(lambda: self.prev_frame('left'))
-        self.btn_prev_left.setEnabled(False)
-        left_control_layout.addWidget(self.btn_prev_left)
-        
+        self.btn_prev_left.clicked.connect(lambda: self.change_frame('left', -1))
+        left_control.addWidget(self.btn_prev_left)
         self.btn_next_left = QPushButton('下一帧')
-        self.btn_next_left.clicked.connect(lambda: self.next_frame('left'))
-        self.btn_next_left.setEnabled(False)
-        left_control_layout.addWidget(self.btn_next_left)
-        
-        main_layout.addLayout(left_control_layout)
-        
-        # 左侧进度条
+        self.btn_next_left.clicked.connect(lambda: self.change_frame('left', 1))
+        left_control.addWidget(self.btn_next_left)
         self.slider_left = QSlider(Qt.Horizontal)
-        self.slider_left.valueChanged.connect(lambda v: self.slider_moved(v, 'left'))
-        main_layout.addWidget(self.slider_left)
+        self.slider_left.valueChanged.connect(lambda v: self.slider_moved('left', v))
+        left_control.addWidget(self.slider_left)
+        left_video_layout.addLayout(left_control)
+        left_video_group.setLayout(left_video_layout)
+        video_layout.addWidget(left_video_group)
         
-        # 控制按钮区域 (右侧)
-        right_control_layout = QHBoxLayout()
+        # 右侧视频
+        right_video_group = QGroupBox("检索视频")
+        right_video_layout = QVBoxLayout()
+        self.right_image_label = ClickableLabel()
+        self.right_image_label.setMinimumSize(640, 480)
+        right_video_layout.addWidget(self.right_image_label)
         
-        self.btn_load_right = QPushButton('加载序列')
-        self.btn_load_right.clicked.connect(lambda: self.load_frames('right'))
-        right_control_layout.addWidget(self.btn_load_right)
-        
-        self.btn_play_right = QPushButton('播放')
-        self.btn_play_right.clicked.connect(lambda: self.toggle_play('right'))
-        self.btn_play_right.setEnabled(False)
-        right_control_layout.addWidget(self.btn_play_right)
-        
+        # 右侧控制
+        right_control = QHBoxLayout()
         self.btn_prev_right = QPushButton('上一帧')
-        self.btn_prev_right.clicked.connect(lambda: self.prev_frame('right'))
-        self.btn_prev_right.setEnabled(False)
-        right_control_layout.addWidget(self.btn_prev_right)
-        
+        self.btn_prev_right.clicked.connect(lambda: self.change_frame('right', -1))
+        right_control.addWidget(self.btn_prev_right)
         self.btn_next_right = QPushButton('下一帧')
-        self.btn_next_right.clicked.connect(lambda: self.next_frame('right'))
-        self.btn_next_right.setEnabled(False)
-        right_control_layout.addWidget(self.btn_next_right)
-        
-        main_layout.addLayout(right_control_layout)
-        
-        # 右侧进度条
+        self.btn_next_right.clicked.connect(lambda: self.change_frame('right', 1))
+        right_control.addWidget(self.btn_next_right)
         self.slider_right = QSlider(Qt.Horizontal)
-        self.slider_right.valueChanged.connect(lambda v: self.slider_moved(v, 'right'))
-        main_layout.addWidget(self.slider_right)
+        self.slider_right.valueChanged.connect(lambda v: self.slider_moved('right', v))
+        right_control.addWidget(self.slider_right)
+        right_video_layout.addLayout(right_control)
+        right_video_group.setLayout(right_video_layout)
+        video_layout.addWidget(right_video_group)
         
-        # 同步播放控制
-        sync_layout = QHBoxLayout()
-        self.btn_sync_play = QPushButton('同步播放')
-        self.btn_sync_play.clicked.connect(self.sync_play)
-        self.btn_sync_play.setEnabled(False)
-        sync_layout.addWidget(self.btn_sync_play)
+        main_layout.addLayout(video_layout)
         
-        self.btn_sync_stop = QPushButton('同步停止')
-        self.btn_sync_stop.clicked.connect(self.sync_stop)
-        self.btn_sync_stop.setEnabled(False)
-        sync_layout.addWidget(self.btn_sync_stop)
+        # 结果显示区域
+        result_layout = QHBoxLayout()
         
-        main_layout.addLayout(sync_layout)
+        # 查询结果
+        query_group = QGroupBox("查询人物")
+        query_layout = QVBoxLayout()
+        self.query_image_label = QLabel()
+        self.query_image_label.setAlignment(Qt.AlignCenter)
+        self.query_image_label.setFixedSize(200, 200)
+        self.query_image_label.setStyleSheet("border: 2px solid gray;")
+        query_layout.addWidget(self.query_image_label)
+        self.query_info_label = QLabel("未选择查询人物")
+        query_layout.addWidget(self.query_info_label)
+        query_group.setLayout(query_layout)
+        result_layout.addWidget(query_group)
         
+        # 候选结果
+        candidate_group = QGroupBox("候选人物 (点击跳转)")
+        candidate_layout = QVBoxLayout()
+        self.candidate_list = QListWidget()
+        self.candidate_list.itemClicked.connect(self.handle_candidate_click)
+        candidate_layout.addWidget(self.candidate_list)
+        candidate_group.setLayout(candidate_layout)
+        result_layout.addWidget(candidate_group)
+        
+        main_layout.addLayout(result_layout)
         self.setLayout(main_layout)
-        self.setWindowTitle('双帧序列播放器(带行人检测)')
-        self.resize(1400, 900)
+        
+        # 初始状态
+        self.update_controls()
     
-    def load_frames(self, side):
-        """选择包含帧序列的文件夹"""
-        dir_path = QFileDialog.getExistingDirectory(self, f'选择{side}侧帧序列文件夹')
-        if dir_path:
-            frame_files = sorted([
-                os.path.join(dir_path, f) 
-                for f in os.listdir(dir_path) 
-                if f.lower().endswith(('.png', '.jpg', '.jpeg'))
-            ])
+    def load_sequence(self, side):
+        dir_path = QFileDialog.getExistingDirectory(self, f'选择{side}侧视频序列')
+        if not dir_path:
+            return
             
-            if frame_files:
-                if side == 'left':
-                    self.frame_files_left = frame_files
-                    self.current_idx_left = 0
-                    self.slider_left.setRange(0, len(self.frame_files_left)-1)
-                    self.btn_play_left.setEnabled(True)
-                    self.btn_prev_left.setEnabled(True)
-                    self.btn_next_left.setEnabled(True)
-                    self.btn_detect_left.setEnabled(True)
-                else:
-                    self.frame_files_right = frame_files
-                    self.current_idx_right = 0
-                    self.slider_right.setRange(0, len(self.frame_files_right)-1)
-                    self.btn_play_right.setEnabled(True)
-                    self.btn_prev_right.setEnabled(True)
-                    self.btn_next_right.setEnabled(True)
-                    self.btn_detect_right.setEnabled(True)
-                
-                # 如果两侧都加载了序列，启用同步控制
-                if self.frame_files_left and self.frame_files_right:
-                    self.btn_sync_play.setEnabled(True)
-                    self.btn_sync_stop.setEnabled(True)
-                
-                self.show_frame(side)
-    
-    def show_frame(self, side):
-        """显示当前帧"""
-        if side == 'left':
-            if 0 <= self.current_idx_left < len(self.frame_files_left):
-                pixmap = QPixmap(self.frame_files_left[self.current_idx_left])
-                self.image_label_left.setPixmap(
-                    pixmap.scaled(self.image_label_left.size(), 
-                                Qt.KeepAspectRatio,
-                                Qt.SmoothTransformation))
-                self.slider_left.setValue(self.current_idx_left)
-        else:
-            if 0 <= self.current_idx_right < len(self.frame_files_right):
-                pixmap = QPixmap(self.frame_files_right[self.current_idx_right])
-                self.image_label_right.setPixmap(
-                    pixmap.scaled(self.image_label_right.size(), 
-                                Qt.KeepAspectRatio,
-                                Qt.SmoothTransformation))
-                self.slider_right.setValue(self.current_idx_right)
-    
-    def toggle_play(self, side):
-        """切换播放/暂停状态"""
-        if side == 'left':
-            self.playing_left = not self.playing_left
-            self.btn_play_left.setText('暂停' if self.playing_left else '播放')
-            
-            if self.playing_left:
-                self.timer_left.start(100)  # 100ms = 10fps
-            else:
-                self.timer_left.stop()
-        else:
-            self.playing_right = not self.playing_right
-            self.btn_play_right.setText('暂停' if self.playing_right else '播放')
-            
-            if self.playing_right:
-                self.timer_right.start(100)  # 100ms = 10fps
-            else:
-                self.timer_right.stop()
-    
-    def next_frame(self, side):
-        """显示下一帧"""
-        if side == 'left':
-            if self.frame_files_left:
-                self.current_idx_left = (self.current_idx_left + 1) % len(self.frame_files_left)
-                self.show_frame('left')
-        else:
-            if self.frame_files_right:
-                self.current_idx_right = (self.current_idx_right + 1) % len(self.frame_files_right)
-                self.show_frame('right')
-    
-    def prev_frame(self, side):
-        """显示上一帧"""
-        if side == 'left':
-            if self.frame_files_left:
-                self.current_idx_left = (self.current_idx_left - 1) % len(self.frame_files_left)
-                self.show_frame('left')
-        else:
-            if self.frame_files_right:
-                self.current_idx_right = (self.current_idx_right - 1) % len(self.frame_files_right)
-                self.show_frame('right')
-    
-    def slider_moved(self, value, side):
-        """滑块拖动事件"""
-        if side == 'left':
-            if not self.timer_left.isActive():  # 防止播放时拖动冲突
-                self.current_idx_left = value
-                self.show_frame('left')
-        else:
-            if not self.timer_right.isActive():  # 防止播放时拖动冲突
-                self.current_idx_right = value
-                self.show_frame('right')
-    
-    def next_frame_left(self):
-        self.next_frame('left')
-    
-    def next_frame_right(self):
-        self.next_frame('right')
-    
-    def sync_play(self):
-        """同步播放两侧序列"""
-        self.playing_left = True
-        self.playing_right = True
-        self.btn_play_left.setText('暂停')
-        self.btn_play_right.setText('暂停')
-        self.timer_left.start(100)
-        self.timer_right.start(100)
-    
-    def sync_stop(self):
-        """同步停止两侧序列"""
-        self.playing_left = False
-        self.playing_right = False
-        self.btn_play_left.setText('播放')
-        self.btn_play_right.setText('播放')
-        self.timer_left.stop()
-        self.timer_right.stop()
-    
-    def run_detection(self, side):
-        """运行行人检测"""
-        frame_files = self.frame_files_left if side == 'left' else self.frame_files_right
-        if not frame_files:
-            QMessageBox.warning(self, "警告", f"请先加载{side}侧帧序列!")
+        # 检查必要目录
+        required_dirs = ['img1', 'det', 'person_crops', 'reid_features']
+        missing_dirs = [d for d in required_dirs if not os.path.exists(os.path.join(dir_path, d))]
+        
+        if missing_dirs:
+            QMessageBox.warning(self, "警告", f"缺少必要目录: {', '.join(missing_dirs)}")
             return
         
-        # 获取序列目录 (假设帧序列在img1子目录中)
-        seq_dir = os.path.dirname(os.path.dirname(frame_files[0]))
+        if side == 'left':
+            self.seq_path_left = dir_path
+            self.left_seq_label.setText(os.path.basename(dir_path))
+            self.load_detections('left')
+        else:
+            self.seq_path_right = dir_path
+            self.right_seq_label.setText(os.path.basename(dir_path))
+            self.load_detections('right')
         
-        # 检查YOLO模型文件
-        if not os.path.exists(self.detection_model_path):
-            model_path, _ = QFileDialog.getOpenFileName(
-                self, "选择YOLO模型文件", "", "PyTorch模型 (*.pt)")
-            if model_path:
-                self.detection_model_path = model_path
+        self.load_frame(side, 1)
+        self.update_controls()
+    
+    def load_frame(self, side, frame_id):
+        seq_path = self.seq_path_left if side == 'left' else self.seq_path_right
+        if not seq_path:
+            return
+        
+        img_path = os.path.join(seq_path, 'img1', f"{frame_id:06d}.jpg")
+        
+        if os.path.exists(img_path):
+            # 读取图像并存储原始尺寸
+            img = cv2.imread(img_path)
+            self.original_img_size[side] = (img.shape[1], img.shape[0])  # (width, height)
+            
+            # 转换为QPixmap并显示
+            pixmap = self.cv2_to_pixmap(img)
+            
+            if side == 'left':
+                self.current_left_frame = frame_id
+                self.slider_left.setMaximum(self.get_total_frames('left'))
+                self.slider_left.setValue(frame_id-1)
+                self.left_image_label.setPixmap(pixmap.scaled(
+                    self.left_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             else:
+                self.current_right_frame = frame_id
+                self.slider_right.setMaximum(self.get_total_frames('right'))
+                self.slider_right.setValue(frame_id-1)
+                self.right_image_label.setPixmap(pixmap.scaled(
+                    self.right_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    
+    def cv2_to_pixmap(self, cv_img):
+        """将OpenCV图像转换为QPixmap"""
+        height, width, channel = cv_img.shape
+        bytes_per_line = 3 * width
+        q_img = QImage(cv_img.data, width, height, bytes_per_line, QImage.Format_RGB888).rgbSwapped()
+        return QPixmap.fromImage(q_img)
+    
+    def get_total_frames(self, side):
+        seq_path = self.seq_path_left if side == 'left' else self.seq_path_right
+        if not seq_path:
+            return 0
+        img_dir = os.path.join(seq_path, 'img1')
+        frames = len([f for f in os.listdir(img_dir) if f.endswith('.jpg')])
+        return frames
+    
+    def load_detections(self, side):
+        seq_path = self.seq_path_left if side == 'left' else self.seq_path_right
+        if not seq_path:
+            return
+        
+        det_file = os.path.join(seq_path, 'det', 'det_yolov8x.txt')
+        
+        if os.path.exists(det_file):
+            detections = {}
+            with open(det_file, 'r') as f:
+                for line in f:
+                    parts = line.strip().split(',')
+                    if len(parts) < 10:  # 确保有足够字段
+                        continue
+                    
+                    try:
+                        frame_id = int(parts[0])
+                        detection_id = int(parts[9])
+                        # YOLO格式: frame_id,-1,x_center,y_center,width,height,conf,-1,-1,detection_id
+                        bbox = list(map(float, parts[2:6]))  # x_center, y_center, width, height (归一化)
+                        conf = float(parts[6])
+                        
+                        if frame_id not in detections:
+                            detections[frame_id] = []
+                        
+                        detections[frame_id].append({
+                            'id': detection_id,
+                            'bbox': bbox,  # 存储归一化坐标
+                            'conf': conf
+                        })
+                    except Exception as e:
+                        print(f"解析检测行错误: {line.strip()} | {str(e)}")
+                        continue
+            
+            if side == 'left':
+                self.detections_left = detections
+            else:
+                self.detections_right = detections
+
+    def handle_left_click(self, pos):
+        if not self.seq_path_left or not self.detections_left:
+            QMessageBox.warning(self, "警告", "请先加载左侧视频序列!")
+            return
+            
+        if self.current_left_frame not in self.detections_left:
+            QMessageBox.information(self, "提示", "当前帧没有检测到行人")
+            return
+            
+        pixmap = self.left_image_label.pixmap()
+        if not pixmap:
+            return
+        
+        # 获取UI中图像的显示区域和缩放比例
+        img_size = pixmap.size()
+        label_size = self.left_image_label.size()
+        
+        # 计算缩放比例和偏移 (保持宽高比居中显示)
+        w_ratio = label_size.width() / img_size.width()
+        h_ratio = label_size.height() / img_size.height()
+        scale = min(w_ratio, h_ratio)
+        
+        offset_x = (label_size.width() - img_size.width() * scale) / 2
+        offset_y = (label_size.height() - img_size.height() * scale) / 2
+        
+        # 检查点击是否在图像区域内
+        if not (offset_x <= pos.x() < label_size.width() - offset_x and 
+                offset_y <= pos.y() < label_size.height() - offset_y):
+            QMessageBox.information(self, "提示", "请点击图像区域内")
+            return
+        
+        # 转换为归一化坐标 (相对于原始图像)
+        norm_x = (pos.x() - offset_x) / (img_size.width() * scale)
+        norm_y = (pos.y() - offset_y) / (img_size.height() * scale)
+        
+        # 查找点击的行人 (使用归一化坐标比较)
+        frame_dets = self.detections_left[self.current_left_frame]
+        selected_person = None
+        min_dist = float('inf')
+        
+        for det in frame_dets:
+            # YOLO格式: [x_center, y_center, width, height] 都是归一化坐标
+            x_center, y_center, width, height = det['bbox']
+            
+            # 计算点击点到bbox中心的距离
+            dist = ((norm_x - x_center)**2 + (norm_y - y_center)**2)**0.5
+            
+            # 选择距离最近且点击点在bbox内的检测框
+            if dist < min_dist and (abs(norm_x - x_center) <= width/2 and 
+                                    abs(norm_y - y_center) <= height/2):
+                min_dist = dist
+                selected_person = det
+        
+        if selected_person:
+            self.current_query = {
+                'id': selected_person['id'],
+                'frame': self.current_left_frame,
+                'conf': selected_person['conf'],
+                'seq_path': self.seq_path_left,
+                'bbox': selected_person['bbox']  # 存储归一化坐标
+            }
+            self.show_query_person()
+            self.draw_selection_effect(selected_person['bbox'], offset_x, offset_y, scale)
+        else:
+            QMessageBox.information(self, "提示", "未检测到点击位置有行人\n请尝试点击行人身体中心区域")
+
+    def draw_selection_effect(self, norm_bbox, offset_x, offset_y, scale):
+        """在UI上绘制选中行人的效果"""
+        pixmap = self.left_image_label.pixmap()
+        if not pixmap:
+            return
+        
+        # 创建新的显示图像
+        display_pixmap = QPixmap(self.left_image_label.size())
+        display_pixmap.fill(QColor("#222"))
+        
+        painter = QPainter(display_pixmap)
+        
+        # 绘制原始图像
+        img_size = pixmap.size()
+        painter.drawPixmap(offset_x, offset_y, 
+                          img_size.width() * scale, 
+                          img_size.height() * scale, 
+                          pixmap)
+        
+        # 转换归一化bbox到显示坐标
+        x_center, y_center, width, height = norm_bbox
+        display_x = offset_x + x_center * img_size.width() * scale
+        display_y = offset_y + y_center * img_size.height() * scale
+        display_w = width * img_size.width() * scale
+        display_h = height * img_size.height() * scale
+        
+        # 绘制高亮框
+        pen = QPen(QColor(0, 255, 0), 3)  # 绿色边框
+        painter.setPen(pen)
+        painter.drawRect(int(display_x - display_w/2), 
+                        int(display_y - display_h/2), 
+                        int(display_w), 
+                        int(display_h))
+        
+        # 绘制ID
+        font = QFont()
+        font.setPointSize(14)
+        painter.setFont(font)
+        painter.setPen(QPen(QColor(255, 255, 255), 3))
+        painter.drawText(int(display_x - display_w/2) + 5, 
+                        int(display_y - display_h/2) + 25, 
+                        f"ID: {self.current_query['id']}")
+        
+        painter.end()
+        self.left_image_label.setPixmap(display_pixmap)
+
+    def show_query_person(self):
+        if not self.current_query:
+            return
+        
+        # 加载裁剪图像
+        crop_dir = os.path.join(self.current_query['seq_path'], 'person_crops')
+        crop_path = os.path.join(crop_dir, f"{self.current_query['id']:06d}_*.jpg")
+        crop_files = glob.glob(crop_path)
+        
+        if crop_files:
+            pixmap = QPixmap(crop_files[0]).scaled(
+                200, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.query_image_label.setPixmap(pixmap)
+        else:
+            self.query_image_label.clear()
+        
+        # 显示信息
+        info = f"ID: {self.current_query['id']}\n"
+        info += f"帧号: {self.current_query['frame']}\n"
+        info += f"置信度: {self.current_query['conf']:.2f}"
+        self.query_info_label.setText(info)
+
+    def find_person_frame(self, person_id, side):
+        detections = self.detections_left if side == 'left' else self.detections_right
+        for frame_id, dets in detections.items():
+            for det in dets:
+                if det['id'] == person_id:
+                    return frame_id
+        return None
+
+    def update_candidate_list(self):
+        self.candidate_list.clear()
+        for i, person in enumerate(self.candidate_persons[:20]):  # 只显示前20个结果
+            item_text = f"ID: {person['id']} | 相似度: {person['similarity']:.4f} | 帧: {person['frame']}"
+            self.candidate_list.addItem(item_text)
+
+    def handle_candidate_click(self, item):
+        if not self.seq_path_right:
+            return
+        
+        selected_idx = self.candidate_list.row(item)
+        if 0 <= selected_idx < len(self.candidate_persons):
+            person = self.candidate_persons[selected_idx]
+            self.load_frame('right', person['frame'])
+            self.highlight_selected_person('right', person['id'])
+
+    def highlight_selected_person(self, side, person_id):
+        if side == 'left':
+            frame_id = self.current_left_frame
+            seq_path = self.seq_path_left
+            detections = self.detections_left
+        else:
+            frame_id = self.current_right_frame
+            seq_path = self.seq_path_right
+            detections = self.detections_right
+        
+        if frame_id not in detections:
+            return
+        
+        # 查找指定人物
+        selected_det = None
+        for det in detections[frame_id]:
+            if det['id'] == person_id:
+                selected_det = det
+                break
+        
+        if selected_det:
+            # 加载原始图像
+            img_path = os.path.join(seq_path, 'img1', f"{frame_id:06d}.jpg")
+            if not os.path.exists(img_path):
                 return
+            
+            img = cv2.imread(img_path)
+            height, width = img.shape[:2]
+            
+            # 转换归一化坐标到绝对坐标
+            x_center, y_center, w, h = selected_det['bbox']
+            abs_x = int(x_center * width)
+            abs_y = int(y_center * height)
+            abs_w = int(w * width)
+            abs_h = int(h * height)
+            
+            # 绘制边框和ID
+            cv2.rectangle(img, 
+                         (abs_x - abs_w//2, abs_y - abs_h//2),
+                         (abs_x + abs_w//2, abs_y + abs_h//2),
+                         (0, 255, 0), 3)
+            
+            cv2.putText(img, f"ID: {person_id}", 
+                       (abs_x - abs_w//2 + 10, abs_y - abs_h//2 + 30),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            
+            # 显示图像
+            pixmap = self.cv2_to_pixmap(img)
+            if side == 'left':
+                self.left_image_label.setPixmap(pixmap.scaled(
+                    self.left_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+            else:
+                self.right_image_label.setPixmap(pixmap.scaled(
+                    self.right_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+    def change_frame(self, side, delta):
+        current_frame = self.current_left_frame if side == 'left' else self.current_right_frame
+        total_frames = self.get_total_frames(side)
+        new_frame = max(1, min(total_frames, current_frame + delta))
+        self.load_frame(side, new_frame)
+
+    def slider_moved(self, side, value):
+        frame_id = value + 1  # 滑块从0开始，帧号从1开始
+        self.load_frame(side, frame_id)
+
+    def update_controls(self):
+        has_left = self.seq_path_left is not None
+        has_right = self.seq_path_right is not None
         
-        # 禁用相关按钮
-        if side == 'left':
-            self.btn_detect_left.setEnabled(False)
-            self.btn_stop_detect_left.setEnabled(True)
-            self.progress_left.setValue(0)
-        else:
-            self.btn_detect_right.setEnabled(False)
-            self.btn_stop_detect_right.setEnabled(True)
-            self.progress_right.setValue(0)
+        self.btn_prev_left.setEnabled(has_left)
+        self.btn_next_left.setEnabled(has_left)
+        self.slider_left.setEnabled(has_left)
         
-        # 创建并启动检测线程
-        if side == 'left':
-            self.detection_thread_left = DetectionThread(seq_dir, self.detection_model_path, side)
-            self.detection_thread_left.progress_updated.connect(self.update_detection_progress)
-            self.detection_thread_left.detection_finished.connect(self.detection_completed)
-            self.detection_thread_left.detection_failed.connect(self.detection_failed)
-            self.detection_thread_left.start()
-        else:
-            self.detection_thread_right = DetectionThread(seq_dir, self.detection_model_path, side)
-            self.detection_thread_right.progress_updated.connect(self.update_detection_progress)
-            self.detection_thread_right.detection_finished.connect(self.detection_completed)
-            self.detection_thread_right.detection_failed.connect(self.detection_failed)
-            self.detection_thread_right.start()
-    
-    def stop_detection(self, side):
-        """停止检测过程"""
-        if side == 'left':
-            if self.detection_thread_left and self.detection_thread_left.isRunning():
-                self.detection_thread_left.stop()
-                self.detection_thread_left.wait()
-                self.progress_left.setValue(0)
-                QMessageBox.information(self, "信息", "左侧检测已停止")
-            
-            self.btn_detect_left.setEnabled(True)
-            self.btn_stop_detect_left.setEnabled(False)
-        else:
-            if self.detection_thread_right and self.detection_thread_right.isRunning():
-                self.detection_thread_right.stop()
-                self.detection_thread_right.wait()
-                self.progress_right.setValue(0)
-                QMessageBox.information(self, "信息", "右侧检测已停止")
-            
-            self.btn_detect_right.setEnabled(True)
-            self.btn_stop_detect_right.setEnabled(False)
-    
-    def update_detection_progress(self, current, total, side):
-        """更新检测进度条"""
-        if side == 'left':
-            self.progress_left.setMaximum(total)
-            self.progress_left.setValue(current)
-        else:
-            self.progress_right.setMaximum(total)
-            self.progress_right.setValue(current)
-    
-    def detection_completed(self, output_file, side):
-        """检测完成处理"""
-        if side == 'left':
-            self.btn_detect_left.setEnabled(True)
-            self.btn_stop_detect_left.setEnabled(False)
-        else:
-            self.btn_detect_right.setEnabled(True)
-            self.btn_stop_detect_right.setEnabled(False)
-            
-        QMessageBox.information(self, "完成", f"{side}侧行人检测完成!\n结果已保存至:\n{output_file}")
-    
-    def detection_failed(self, error_msg, side):
-        """检测失败处理"""
-        if side == 'left':
-            self.btn_detect_left.setEnabled(True)
-            self.btn_stop_detect_left.setEnabled(False)
-        else:
-            self.btn_detect_right.setEnabled(True)
-            self.btn_stop_detect_right.setEnabled(False)
-            
-        QMessageBox.critical(self, "错误", f"{side}侧检测过程中发生错误:\n{error_msg}")
+        self.btn_prev_right.setEnabled(has_right)
+        self.btn_next_right.setEnabled(has_right)
+        self.slider_right.setEnabled(has_right)
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    player = DualFramePlayer()
-    player.show()
+    window = PersonSearchApp()
+    window.show()
     sys.exit(app.exec_())
