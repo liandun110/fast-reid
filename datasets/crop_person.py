@@ -12,7 +12,7 @@ def save_cropped_pedestrians(args):
     
     # 读取检测结果，使用合适的列名
     det_df = pd.read_csv(det_path, header=None)
-    det_df.columns = ['frame', 'id', 'x', 'y', 'w', 'h', 'conf', 'class', 'vis', 'detection_id']
+    det_df.columns = ['frame', 'id', 'x_center', 'y_center', 'width', 'height', 'conf', 'class', 'vis', 'detection_id']
     
     # 应用置信度阈值过滤
     det_df = det_df[det_df['conf'] >= args.min_conf]
@@ -62,6 +62,9 @@ def save_cropped_pedestrians(args):
             print(f"警告: 无法读取图片 {frame_path}")
             continue
         
+        # 获取图像尺寸用于归一化坐标转换
+        img_height, img_width = img.shape[:2]
+        
         # 获取当前帧的所有检测结果
         frame_dets = det_df[det_df['frame'] == frame_id]
         
@@ -69,12 +72,25 @@ def save_cropped_pedestrians(args):
         for _, row in frame_dets.iterrows():
             # 使用检测文件中的detection_id作为唯一标识符
             detection_id = int(row['detection_id'])
-            x, y, w, h = map(int, [row['x'], row['y'], row['w'], row['h']])
             conf = float(row['conf'])
             
-            # 裁剪行人区域，确保不越界
-            x1, y1 = max(0, x), max(0, y)
-            x2, y2 = min(img.shape[1], x + w), min(img.shape[0], y + h)
+            # 转换YOLO归一化坐标(center_x, center_y, width, height)为绝对坐标(x1, y1, x2, y2)
+            x_center = float(row['x_center']) * img_width
+            y_center = float(row['y_center']) * img_height
+            width = float(row['width']) * img_width
+            height = float(row['height']) * img_height
+            
+            # 计算边界框坐标
+            x1 = int(x_center - width / 2)
+            y1 = int(y_center - height / 2)
+            x2 = int(x_center + width / 2)
+            y2 = int(y_center + height / 2)
+            
+            # 确保坐标在图像范围内
+            x1, y1 = max(0, x1), max(0, y1)
+            x2, y2 = min(img_width, x2), min(img_height, y2)
+            
+            # 裁剪行人区域
             cropped = img[y1:y2, x1:x2]
             
             # 跳过空裁剪结果
@@ -82,7 +98,6 @@ def save_cropped_pedestrians(args):
                 continue
             
             # 构建输出文件名
-            # 使用detection_id作为唯一ID，格式化为6位数字
             filename = f"{detection_id:06d}_c1s1_{frame_name}_{conf:.4f}.jpg"
             save_path = os.path.join(output, filename)
             

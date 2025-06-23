@@ -3,12 +3,24 @@
 ### 数据集组织方式
 
 ```bash
-- seq_path
-  - img1  # ffmpeg -i 人脸追踪*.mp4 -f image2 -vcodec mjpeg -qscale:v 2 images/%06d.jpg
-  - det  # python datasets/person_detect.py --seq_path=seq_path
-  - person_crops  # python datasets/crop_person.py --seq_path-seq_path
-  - reid_features  # python demo/demo.py --seq-path=seq_path
+seq_path
+  mg1  # ffmpeg -i 人脸追踪*.mp4 -f image2 -vcodec mjpeg -qscale:v 2 images/%06d.jpg
+  det  # python datasets/person_detect.py --seq_path=seq_path
+  person_crops  # python datasets/crop_person.py --seq_path=seq_path
+  reid_features  # python demo/demo.py --seq-path=seq_path
 ```
+
+### 界面功能
+
+1. 指定seq_path后，自动获取上述各项信息。
+
+2. 鼠标点击画面左侧某个行人（query person），自动显示其行人框。（这种显示是必要的。因为如果点击后没显示出行人框，说明目标检测器根本没有找到这个人，后续所有操作都是无意义的。也为后续工作人员始终关注这个人提供便利。）
+
+3. 将query person子图（根据detection_id从person_crops中获取）展示在UI下方，根据detection_id从reid_features文件夹中获取其特征，并与右侧视频所有特征计算相似度，同样在UI下方展示若干得分最高的candidate persons及相关信息，如帧号、得分.
+
+4. 点击某个candidate person，右侧视频自动跳转到对应帧，并在相应行人上绘制边框。
+
+---
 
 <img src=".github/FastReID-Logo.png" width="300" >
 

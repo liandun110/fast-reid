@@ -6,7 +6,7 @@ from tqdm import tqdm
 
 def person_detect(seq_path, model_path='yolov8x.pt', output_dir=None):
     """
-    使用YOLOv8模型对MOT16格式的序列进行行人检测
+    使用YOLOv8模型对MOT16格式的序列进行行人检测，输出YOLO格式的检测框
     
     参数:
         seq_path (str): 序列路径，包含img1子目录
@@ -47,6 +47,10 @@ def person_detect(seq_path, model_path='yolov8x.pt', output_dir=None):
         for frame_id, img_name in tqdm(enumerate(frame_files, 1), total=total_frames):
             img_path = os.path.join(img_dir, img_name)
             
+            # 读取图像获取宽高
+            img = cv2.imread(img_path)
+            img_h, img_w = img.shape[:2]
+            
             # 模型推理
             results = model(img_path, verbose=False)[0]
             
@@ -58,9 +62,15 @@ def person_detect(seq_path, model_path='yolov8x.pt', output_dir=None):
                 conf = float(box.conf)
                 cls = int(box.cls)
                 
+                # 转换为YOLO格式的相对坐标
+                x_center = (x1 + w/2) / img_w
+                y_center = (y1 + h/2) / img_h
+                width = w / img_w
+                height = h / img_h
+                
                 # 仅保留行人类别（YOLO中通常是class==0）
                 if cls == 0:
-                    line = f"{frame_id},-1,{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.4f},-1,-1,{detection_id}\n"
+                    line = f"{frame_id},-1,{x_center:.6f},{y_center:.6f},{width:.6f},{height:.6f},{conf:.6f},-1,-1,{detection_id}\n"
                     f_out.write(line)
                     detection_id += 1  # 递增ID
     
