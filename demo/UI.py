@@ -2,11 +2,19 @@ import sys
 import os
 import glob
 import cv2
+import numpy as np
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QFileDialog, 
                             QHBoxLayout, QVBoxLayout, QSlider, QGridLayout, QGroupBox,
                             QMessageBox, QListWidget)
 from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QFont, QImage
 from PyQt5.QtCore import Qt, pyqtSignal, QPoint
+
+
+def postprocess(features):
+    """Normalize feature to compute cosine distance"""
+    features = F.normalize(features)
+    features = features.cpu().data.numpy()
+    return features
 
 class ClickableLabel(QLabel):
     clicked = pyqtSignal(QPoint)
@@ -335,10 +343,55 @@ class PersonSearchApp(QWidget):
                 base_name = os.path.splitext(crop_file)[0]  # 去掉扩展名
                 reid_path = os.path.join(self.seq_path_left, 'reid_features', f"{base_name}.npy")
                 print(f"选中行人的ReID特征路径: {reid_path}")
+                if os.path.exists(reid_path):
+                    self.search_similar_persons(reid_path)
             else:
                 print(f"警告: 未找到ID为{selected_person['id']}的裁剪图片")
         else:
             QMessageBox.information(self, "提示", "未检测到点击位置有行人\n请尝试点击行人身体中心区域")
+
+    def search_similar_persons(self, query_feat_path):
+        if not os.path.exists(query_feat_path) or not self.seq_path_right:
+            return
+
+        # 加载查询行人的特征
+        query_feat = np.load(query_feat_path).flatten()  # 保证是 1D 向量
+        reid_dir = os.path.join(self.seq_path_right, 'reid_features')
+        
+        results = []
+
+        # 遍历右侧视频的所有行人特征文件
+        for feat_file in glob.glob(os.path.join(reid_dir, '*.npy')):
+            try:
+                feat = np.load(feat_file).flatten()  # 保证是 1D 向量
+                sim = self.cosine_similarity(query_feat, feat)  # 计算相似度
+
+                # 解析文件名，例如：007097_c1s1_001229_0.9169.npy
+                base_name = os.path.splitext(os.path.basename(feat_file))[0]
+                parts = base_name.split('_')
+                if len(parts) < 4:
+                    continue  # 文件名格式不对，跳过
+
+                person_id = int(parts[0])  # 提取 person_id
+                frame_id = int(parts[2])   # 提取 frame_id
+
+                results.append({
+                    'id': person_id,
+                    'frame': frame_id,
+                    'similarity': sim
+                })
+            except Exception as e:
+                print(f"跳过特征文件 {feat_file}: {e}")
+                continue
+
+        # 相似度排序（从高到低）
+        results = sorted(results, key=lambda x: -x['similarity'])
+        self.candidate_persons = results
+        self.update_candidate_list()
+
+
+    def cosine_similarity(self, a, b):
+        return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-6))
 
     def draw_selection_effect(self, norm_bbox, offset_x, offset_y, scale):
         """在UI上绘制选中行人的效果"""
