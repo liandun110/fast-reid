@@ -1,14 +1,12 @@
 import sys
 import os
 import glob
-import numpy as np
 import cv2
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QFileDialog, 
                             QHBoxLayout, QVBoxLayout, QSlider, QGridLayout, QGroupBox,
                             QMessageBox, QListWidget)
 from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QFont, QImage
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QRect
-from scipy.spatial.distance import cdist
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint
 
 class ClickableLabel(QLabel):
     clicked = pyqtSignal(QPoint)
@@ -324,6 +322,19 @@ class PersonSearchApp(QWidget):
             }
             self.show_query_person()
             self.draw_selection_effect(selected_person['bbox'], offset_x, offset_y, scale)
+            
+            # 修改ReID特征路径查找方式，匹配demo.py中的格式
+            crop_dir = os.path.join(self.seq_path_left, 'person_crops')
+            crop_files = glob.glob(os.path.join(crop_dir, f"{selected_person['id']:06d}_*.jpg"))
+            
+            if crop_files:
+                # 获取第一个匹配的裁剪图片文件名
+                crop_file = os.path.basename(crop_files[0])
+                base_name = os.path.splitext(crop_file)[0]  # 去掉扩展名
+                reid_path = os.path.join(self.seq_path_left, 'reid_features', f"{base_name}.npy")
+                print(f"选中行人的ReID特征路径: {reid_path}")
+            else:
+                print(f"警告: 未找到ID为{selected_person['id']}的裁剪图片")
         else:
             QMessageBox.information(self, "提示", "未检测到点击位置有行人\n请尝试点击行人身体中心区域")
 
@@ -394,14 +405,6 @@ class PersonSearchApp(QWidget):
         info += f"帧号: {self.current_query['frame']}\n"
         info += f"置信度: {self.current_query['conf']:.2f}"
         self.query_info_label.setText(info)
-
-    def find_person_frame(self, person_id, side):
-        detections = self.detections_left if side == 'left' else self.detections_right
-        for frame_id, dets in detections.items():
-            for det in dets:
-                if det['id'] == person_id:
-                    return frame_id
-        return None
 
     def update_candidate_list(self):
         self.candidate_list.clear()
