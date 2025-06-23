@@ -123,7 +123,7 @@ def visualize_results(top_n_results, top_n, save_dir='visualization_results'):
 
 
 if __name__ == '__main__':
-    folder_path = 'datasets/test_images'  # 请替换为实际的文件夹路径
+    folder_path = 'datasets/test_images_yisuo0102'  # 请替换为实际的文件夹路径
     top_n = 10  # 可以修改这个值来指定要显示的相似图片数量
     save_dir = 'visualization_results'  # 保存结果的目录
     
