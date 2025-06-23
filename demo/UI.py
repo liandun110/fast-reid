@@ -194,12 +194,14 @@ class PersonSearchApp(QWidget):
             
             if side == 'left':
                 self.current_left_frame = frame_id
+                self.current_left_img_path = img_path  # 添加此行
                 self.slider_left.setMaximum(self.get_total_frames('left'))
                 self.slider_left.setValue(frame_id-1)
                 self.left_image_label.setPixmap(pixmap.scaled(
                     self.left_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
             else:
                 self.current_right_frame = frame_id
+                self.current_right_img_path = img_path  # 可选
                 self.slider_right.setMaximum(self.get_total_frames('right'))
                 self.slider_right.setValue(frame_id-1)
                 self.right_image_label.setPixmap(pixmap.scaled(
@@ -340,49 +342,33 @@ class PersonSearchApp(QWidget):
 
     def draw_selection_effect(self, norm_bbox, offset_x, offset_y, scale):
         """在UI上绘制选中行人的效果"""
-        pixmap = self.left_image_label.pixmap()
-        if not pixmap:
+        # 从原图重新读取图像，防止覆盖错误
+        img = cv2.imread(self.current_left_img_path)
+        if img is None:
             return
         
-        # 创建新的显示图像
-        display_pixmap = QPixmap(self.left_image_label.size())
-        display_pixmap.fill(QColor("#222"))
-        
-        painter = QPainter(display_pixmap)
-        
-        # 绘制原始图像
-        img_size = pixmap.size()
-        painter.drawPixmap(offset_x, offset_y, 
-                          img_size.width() * scale, 
-                          img_size.height() * scale, 
-                          pixmap)
-        
-        # 转换归一化bbox到显示坐标
-        x_center, y_center, width, height = norm_bbox
-        display_x = offset_x + x_center * img_size.width() * scale
-        display_y = offset_y + y_center * img_size.height() * scale
-        display_w = width * img_size.width() * scale
-        display_h = height * img_size.height() * scale
-        
-        # 绘制高亮框
-        pen = QPen(QColor(0, 255, 0), 3)  # 绿色边框
-        painter.setPen(pen)
-        painter.drawRect(int(display_x - display_w/2), 
-                        int(display_y - display_h/2), 
-                        int(display_w), 
-                        int(display_h))
-        
-        # 绘制ID
-        font = QFont()
-        font.setPointSize(14)
-        painter.setFont(font)
-        painter.setPen(QPen(QColor(255, 255, 255), 3))
-        painter.drawText(int(display_x - display_w/2) + 5, 
-                        int(display_y - display_h/2) + 25, 
-                        f"ID: {self.current_query['id']}")
-        
-        painter.end()
-        self.left_image_label.setPixmap(display_pixmap)
+        height, width = img.shape[:2]
+
+        # 转换归一化bbox为绝对坐标
+        x_center, y_center, w, h = norm_bbox
+        abs_x = int(x_center * width)
+        abs_y = int(y_center * height)
+        abs_w = int(w * width)
+        abs_h = int(h * height)
+
+        # 画框
+        cv2.rectangle(img,
+                    (abs_x - abs_w // 2, abs_y - abs_h // 2),
+                    (abs_x + abs_w // 2, abs_y + abs_h // 2),
+                    (0, 255, 0), 3)
+        cv2.putText(img, f"ID: {self.current_query['id']}",
+                    (abs_x - abs_w // 2 + 10, abs_y - abs_h // 2 + 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+        # 显示
+        pixmap = self.cv2_to_pixmap(img)
+        self.left_image_label.setPixmap(pixmap.scaled(
+            self.left_image_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def show_query_person(self):
         if not self.current_query:
