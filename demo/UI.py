@@ -456,14 +456,19 @@ class PersonSearchApp(QWidget):
 
             if crop_files:
                 icon = QPixmap(crop_files[0]).scaled(80, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                item = QListWidgetItem(QIcon(icon), f"ID: {person['id']} | 相似度: {person['similarity']:.4f} | 帧: {person['frame']}")
+                item = QListWidgetItem(QIcon(icon), f"{person['similarity']:.3f}")
             else:
-                item = QListWidgetItem(f"ID: {person['id']} | 相似度: {person['similarity']:.4f} | 帧: {person['frame']}")
+                item = QListWidgetItem(f"{person['similarity']:.3f}")
             
             self.candidate_list.addItem(item)
             self.candidate_list.setIconSize(QSize(80, 100))
-            self.candidate_list.setViewMode(QListWidget.ListMode)  # 垂直排列
+            self.candidate_list.setViewMode(QListWidget.IconMode)  # 横向排列
             self.candidate_list.setResizeMode(QListWidget.Adjust)
+            self.candidate_list.setMovement(QListWidget.Static)
+            self.candidate_list.setFlow(QListWidget.LeftToRight)  # 从左到右排列
+            self.candidate_list.setSpacing(10)
+            self.candidate_list.setWrapping(False)  # 允许自动换行
+            self.candidate_list.setFixedHeight(200)
 
     def handle_candidate_click(self, item):
         if not self.seq_path_right:
