@@ -5,9 +5,9 @@ import cv2
 import numpy as np
 from PyQt5.QtWidgets import (QApplication, QWidget, QLabel, QPushButton, QFileDialog, 
                             QHBoxLayout, QVBoxLayout, QSlider, QGridLayout, QGroupBox,
-                            QMessageBox, QListWidget)
-from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QFont, QImage
-from PyQt5.QtCore import Qt, pyqtSignal, QPoint
+                            QMessageBox, QListWidget, QListWidgetItem)
+from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QFont, QImage, QIcon
+from PyQt5.QtCore import Qt, pyqtSignal, QPoint, QSize
 
 
 def postprocess(features):
@@ -447,9 +447,23 @@ class PersonSearchApp(QWidget):
 
     def update_candidate_list(self):
         self.candidate_list.clear()
-        for i, person in enumerate(self.candidate_persons[:20]):  # 只显示前20个结果
-            item_text = f"ID: {person['id']} | 相似度: {person['similarity']:.4f} | 帧: {person['frame']}"
-            self.candidate_list.addItem(item_text)
+        crop_dir = os.path.join(self.seq_path_right, 'person_crops')
+
+        for i, person in enumerate(self.candidate_persons[:20]):  # 最多显示前20个
+            # 尝试找到对应的裁剪图像
+            crop_pattern = os.path.join(crop_dir, f"{person['id']:06d}_*.jpg")
+            crop_files = glob.glob(crop_pattern)
+
+            if crop_files:
+                icon = QPixmap(crop_files[0]).scaled(80, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                item = QListWidgetItem(QIcon(icon), f"ID: {person['id']} | 相似度: {person['similarity']:.4f} | 帧: {person['frame']}")
+            else:
+                item = QListWidgetItem(f"ID: {person['id']} | 相似度: {person['similarity']:.4f} | 帧: {person['frame']}")
+            
+            self.candidate_list.addItem(item)
+            self.candidate_list.setIconSize(QSize(80, 100))
+            self.candidate_list.setViewMode(QListWidget.ListMode)  # 垂直排列
+            self.candidate_list.setResizeMode(QListWidget.Adjust)
 
     def handle_candidate_click(self, item):
         if not self.seq_path_right:
