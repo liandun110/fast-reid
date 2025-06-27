@@ -351,38 +351,47 @@ class PersonSearchApp(QWidget):
             QMessageBox.information(self, "提示", "未检测到点击位置有行人\n请尝试点击行人身体中心区域")
 
     def search_similar_persons(self, query_feat_path):
-        if not os.path.exists(query_feat_path) or not self.seq_path_right:
+        if not os.path.exists(query_feat_path) or not self.seq_path_left:
             return
 
-        # 加载查询行人的特征
-        query_feat = np.load(query_feat_path).flatten()  # 保证是 1D 向量
-        reid_dir = os.path.join(self.seq_path_right, 'reid_features')
-        
+        query_feat = np.load(query_feat_path).flatten()
         results = []
 
-        # 遍历右侧视频的所有行人特征文件
-        for feat_file in glob.glob(os.path.join(reid_dir, '*.npy')):
-            try:
-                feat = np.load(feat_file).flatten()  # 保证是 1D 向量
-                sim = self.cosine_similarity(query_feat, feat)  # 计算相似度
+        # 获取左侧视频的上一级路径（即 video_root）
+        video_root = os.path.dirname(self.seq_path_left)
 
-                # 解析文件名，例如：007097_c1s1_001229_0.9169.npy
-                base_name = os.path.splitext(os.path.basename(feat_file))[0]
-                parts = base_name.split('_')
-                if len(parts) < 4:
-                    continue  # 文件名格式不对，跳过
-
-                person_id = int(parts[0])  # 提取 person_id
-                frame_id = int(parts[2])   # 提取 frame_id
-
-                results.append({
-                    'id': person_id,
-                    'frame': frame_id,
-                    'similarity': sim
-                })
-            except Exception as e:
-                print(f"跳过特征文件 {feat_file}: {e}")
+        # 遍历 video_root 目录下所有其他子目录
+        for subdir in glob.glob(os.path.join(video_root, '*')):
+            if not os.path.isdir(subdir) or subdir == self.seq_path_left:
                 continue
+
+            reid_dir = os.path.join(subdir, 'reid_features')
+            crop_dir = os.path.join(subdir, 'person_crops')
+
+            if not os.path.exists(reid_dir):
+                continue
+
+            for feat_file in glob.glob(os.path.join(reid_dir, '*.npy')):
+                try:
+                    feat = np.load(feat_file).flatten()
+                    sim = self.cosine_similarity(query_feat, feat)
+
+                    base_name = os.path.splitext(os.path.basename(feat_file))[0]
+                    parts = base_name.split('_')
+                    if len(parts) < 4:
+                        continue
+
+                    person_id = int(parts[0])
+                    frame_id = int(parts[2])
+
+                    results.append({
+                        'id': person_id,
+                        'frame': frame_id,
+                        'similarity': sim,
+                        'seq_path': subdir  # 保存来源序列路径
+                    })
+                except Exception as e:
+                    print(f"跳过特征文件 {feat_file}: {e}")
 
         # 相似度排序（从高到低）
         results = sorted(results, key=lambda x: -x['similarity'])
@@ -447,10 +456,8 @@ class PersonSearchApp(QWidget):
 
     def update_candidate_list(self):
         self.candidate_list.clear()
-        crop_dir = os.path.join(self.seq_path_right, 'person_crops')
-
-        for i, person in enumerate(self.candidate_persons[:20]):  # 最多显示前20个
-            # 尝试找到对应的裁剪图像
+        for i, person in enumerate(self.candidate_persons[:20]):
+            crop_dir = os.path.join(person['seq_path'], 'person_crops')
             crop_pattern = os.path.join(crop_dir, f"{person['id']:06d}_*.jpg")
             crop_files = glob.glob(crop_pattern)
 
@@ -459,24 +466,28 @@ class PersonSearchApp(QWidget):
                 item = QListWidgetItem(QIcon(icon), f"{person['similarity']:.3f}")
             else:
                 item = QListWidgetItem(f"{person['similarity']:.3f}")
-            
+
+            item.setData(Qt.UserRole, person)  # 存储完整 person 数据
             self.candidate_list.addItem(item)
-            self.candidate_list.setIconSize(QSize(80, 100))
-            self.candidate_list.setViewMode(QListWidget.IconMode)  # 横向排列
-            self.candidate_list.setResizeMode(QListWidget.Adjust)
-            self.candidate_list.setMovement(QListWidget.Static)
-            self.candidate_list.setFlow(QListWidget.LeftToRight)  # 从左到右排列
-            self.candidate_list.setSpacing(10)
-            self.candidate_list.setWrapping(False)  # 允许自动换行
-            self.candidate_list.setFixedHeight(200)
+
+        self.candidate_list.setIconSize(QSize(80, 100))
+        self.candidate_list.setViewMode(QListWidget.IconMode)  # 横向排列
+        self.candidate_list.setResizeMode(QListWidget.Adjust)
+        self.candidate_list.setMovement(QListWidget.Static)
+        self.candidate_list.setFlow(QListWidget.LeftToRight)  # 从左到右排列
+        self.candidate_list.setSpacing(10)
+        self.candidate_list.setWrapping(False)  # 允许自动换行
+        self.candidate_list.setFixedHeight(200)
 
     def handle_candidate_click(self, item):
         if not self.seq_path_right:
             return
         
-        selected_idx = self.candidate_list.row(item)
-        if 0 <= selected_idx < len(self.candidate_persons):
-            person = self.candidate_persons[selected_idx]
+        person = item.data(Qt.UserRole)
+        if person:
+            print(f"候选人物信息 -> ID: {person['id']}, 帧号: {person['frame']}, 相似度: {person['similarity']:.4f}, 来源序列: {person['seq_path']}")
+            self.seq_path_right = person['seq_path']  # 临时切换右侧路径
+            self.load_detections('right')  # 重新加载右侧检测
             self.load_frame('right', person['frame'])
             self.highlight_selected_person('right', person['id'])
 
