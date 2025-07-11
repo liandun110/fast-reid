@@ -1,5 +1,11 @@
 ## Added by zhbli
 
+### 代码功能
+
+`python datasets/geo_align.py`: 计算监控图中像素点与地图中像素点的对应关系
+
+`bash det_crop_reid.bash`: 对一段视频，依次执行：行人检测、行人子图裁剪、reid特征提取。
+
 ### 数据集组织方式
 
 ```bash
