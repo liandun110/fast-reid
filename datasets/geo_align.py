@@ -198,7 +198,7 @@ class MainWindow(QMainWindow):
         self.save_button.clicked.connect(self.save_homography)
         self.save_button.setEnabled(False)
         
-        self.clear_button = QPushButton("清除所有点")
+        self.clear_button = QPushButton("清除所有点及对应关系")
         self.clear_button.setFixedWidth(MAX_IMAGE_SIZE)  # 使用常量设置按钮宽度
         self.clear_button.clicked.connect(self.clear_points)
 
