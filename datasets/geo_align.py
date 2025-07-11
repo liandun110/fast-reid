@@ -293,7 +293,7 @@ class MainWindow(QMainWindow):
         self.find_button.setEnabled(False)
         self.map_label.update()
         self.monitor_label.update()
-        self.status_label.setText("已清除所有点")
+        self.status_label.setText("已清除所有点及对应关系")
 
     def find_corresponding_points(self):
         self.map_label.points = []
