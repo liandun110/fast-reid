@@ -202,7 +202,7 @@ class MainWindow(QMainWindow):
         self.clear_button.setFixedWidth(MAX_IMAGE_SIZE)  # 使用常量设置按钮宽度
         self.clear_button.clicked.connect(self.clear_points)
 
-        self.find_button = QPushButton("查找对应点")
+        self.find_button = QPushButton("查找对应点(清除现有点)")
         self.find_button.setFixedWidth(MAX_IMAGE_SIZE)  # 使用常量设置按钮宽度
         self.find_button.clicked.connect(self.find_corresponding_points)
         self.find_button.setEnabled(False)
