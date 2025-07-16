@@ -89,10 +89,10 @@ class ImageLabel(QLabel):
                 if self.main_window.homography is not None:
                     if self == self.main_window.map_label:
                         other_label = self.main_window.monitor_label
-                        transformation_matrix = self.main_window.homography
+                        transformation_matrix = np.linalg.inv(self.main_window.homography)
                     else:
                         other_label = self.main_window.map_label
-                        transformation_matrix = np.linalg.inv(self.main_window.homography)
+                        transformation_matrix = self.main_window.homography
 
                     # 将归一化坐标转换为原始图像坐标
                     src_x = norm_x * self.original_size.width()
@@ -111,6 +111,8 @@ class ImageLabel(QLabel):
                     # 添加对应点
                     other_label.current_point = (dst_norm_x, dst_norm_y)
                     other_label.points.append(other_label.current_point)
+                    print("变换矩阵为：{}".format(np.round(transformation_matrix, decimals=1).tolist()))
+                    print("对应的点坐标（原始图像）：（{}, {}），归一化坐标：（{}, {}）".format(dst_x, dst_y, dst_norm_x, dst_norm_y))
                     other_label.update()
                 
     def paintEvent(self, event):
@@ -241,8 +243,8 @@ class MainWindow(QMainWindow):
         map_width, map_height = self.map_label.original_size.width(), self.map_label.original_size.height()
         monitor_width, monitor_height = self.monitor_label.original_size.width(), self.monitor_label.original_size.height()
         
-        src_points = np.array([(p[0] * map_width, p[1] * map_height) for p in map_points], dtype=np.float32)
-        dst_points = np.array([(p[0] * monitor_width, p[1] * monitor_height) for p in monitor_points], dtype=np.float32)
+        src_points = np.array([(p[0] * monitor_width, p[1] * monitor_height) for p in monitor_points], dtype=np.float32)
+        dst_points = np.array([(p[0] * map_width, p[1] * map_height) for p in map_points], dtype=np.float32)
         
         # Calculate homography matrix
         self.homography, _ = cv2.findHomography(src_points, dst_points)
@@ -276,6 +278,7 @@ class MainWindow(QMainWindow):
                 "map_image_size": [self.map_label.original_size.width(), self.map_label.original_size.height()],
                 "monitor_image_size": [self.monitor_label.original_size.width(), self.monitor_label.original_size.height()]
             }
+            print("保存的变换矩阵为：{}".format(np.round(self.homography, 1).tolist()))
             
             # Save to file
             with open(file_name, 'w') as f:
