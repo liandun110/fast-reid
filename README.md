@@ -1,10 +1,66 @@
 ## Added by zhbli
 
+### 安装
+
+注意，不能在 arm64 架构的机器（如 NVIDIA orin）上运行。因为在此架构的机器上，QT的安装有问题。
+
 ### 代码功能
 
 `python datasets/geo_align.py`: 计算监控图中像素点与地图中像素点的对应关系
 
 `bash det_crop_reid.bash`: 对一段视频，依次执行：行人检测、行人子图裁剪、reid特征提取。
+
+`python demo/UI.py`: 跨境追踪主界面
+
+`python demo/UI_footprint.py`: UI.py的升级版，带有地图。当选中监控画面的行人后，会在地图上显示该行人的位置。
+
+### 如何在 headless 的远程服务器上运行 QT 的 UI 界面
+
+#### 本地准备
+(1) 安装必要工具
+```bash
+sudo apt update
+sudo apt install -y xauth openssh-client
+```
+(2) 配置 SSH 快捷连接
+编辑～/.ssh/config 文件：nano ~/.ssh/config
+
+添加以下内容（替换端口和用户名）：
+
+```
+Host featurize
+HostName featurize.cn
+User username
+Port 61389
+ForwardX11 yes
+ForwardX11Trusted yes
+```
+
+#### 服务器端配置
+(1) 安装 X11 和 Qt 依赖
+```bash
+sudo apt update
+sudo apt install -y xauth libxcb-xinerama0 libxcb-icccm4 libxcb-image0 \
+libxcb-keysyms1 libxcb-render-util0 libxcb-shape0 \
+libxcb-xfixes0 libxcb-cursor0
+```
+
+在服务器测试连接：xclock
+如果本地弹出时钟窗口，说明 X11 转发成功。
+
+#### 运行 PyQt5 程序
+
+(1) 设置环境变量
+
+```bash
+export DISPLAY=localhost:10.0 # 通常 SSH -Y 会自动设置 export
+```
+
+(2) 启动程序
+
+```bash
+python demo/UI.py
+```
 
 ### 数据集组织方式
 
