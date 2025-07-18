@@ -43,7 +43,11 @@ class PersonSearchApp(QWidget):
         self.current_left_frame = 1
         self.current_right_frame = 1
         self.original_img_size = {}  # 存储原始图像尺寸 (width, height)
+        
+        # 左右两个画面的单应性矩阵
         self.homography = None
+        self.homography_right = None  # 仅新增右侧单应性矩阵变量
+        
         self.map_points = []
         self.monitor_points = []
         self.map_image_size = []
@@ -192,13 +196,15 @@ class PersonSearchApp(QWidget):
         self.load_frame(side, 1)
         self.update_controls()
 
+        # 左右侧都加载各自的geo.json
+        self.load_homography(side)
+
         if side == 'left':
             # 获取 map.png 路径
             map_path = os.path.join(os.path.dirname(dir_path), 'map.png')
             if os.path.exists(map_path):
                 # 尝试加载单应矩阵和对应点
                 print("尝试加载单应矩阵和对应点")
-                self.load_homography()
                 self.show_map_image(map_path)
             else:
                 print("map.png不存在")
@@ -351,13 +357,6 @@ class PersonSearchApp(QWidget):
             }
             self.show_query_person()
             self.draw_selection_effect(selected_person['bbox'], offset_x, offset_y, scale)
-
-            # 在draw_selection_effect调用后添加
-            if hasattr(self, 'map_window') and self.map_window.isVisible():
-                # 重新加载地图以显示新的选中点
-                map_path = os.path.join(os.path.dirname(self.seq_path_left), 'map.png')
-                if os.path.exists(map_path):
-                    self.show_map_image(map_path)
             
             # 修改ReID特征路径查找方式，匹配demo.py中的格式
             crop_dir = os.path.join(self.seq_path_left, 'person_crops')
@@ -370,9 +369,17 @@ class PersonSearchApp(QWidget):
                 reid_path = os.path.join(self.seq_path_left, 'reid_features', f"{base_name}.npy")
                 print(f"选中行人的ReID特征路径: {reid_path}")
                 if os.path.exists(reid_path):
+                    # 查找候选
                     self.search_similar_persons(reid_path)
             else:
                 print(f"警告: 未找到ID为{selected_person['id']}的裁剪图片")
+            # 在draw_selection_effect调用后添加
+            if hasattr(self, 'map_window') and self.map_window.isVisible():
+                # 重新加载地图以显示新的选中点，和与该点相似的候选点
+                map_path = os.path.join(os.path.dirname(self.seq_path_left), 'map.png')
+                if os.path.exists(map_path):
+                    print("重绘地图，显示选中点与候选点")
+                    self.show_map_image(map_path)
         else:
             QMessageBox.information(self, "提示", "未检测到点击位置有行人\n请尝试点击行人身体中心区域")
 
@@ -401,11 +408,47 @@ class PersonSearchApp(QWidget):
                 person_id = int(parts[0])  # 提取 person_id
                 frame_id = int(parts[2])   # 提取 frame_id
 
+                # 计算该候选行人的足底坐标
+                foot_coords = None
+                map_coords = None
+
+                # 获取该行人在对应帧的边界框
+                if frame_id in self.detections_right:
+                    for det in self.detections_right[frame_id]:
+                        if det['id'] == person_id:
+                            # 获取右侧视频该帧的原始尺寸
+                            if 'right' in self.original_img_size:
+                                width, height = self.original_img_size['right']
+                                x_center, y_center, w, h = det['bbox']
+                                
+                                # 计算绝对坐标
+                                abs_x = int(x_center * width)
+                                abs_y = int(y_center * height)
+                                abs_h = int(h * height)
+                                
+                                # 计算足底坐标(边界框底部中心)
+                                foot_x = abs_x
+                                foot_y = abs_y + abs_h // 2
+                                foot_coords = (foot_x, foot_y)
+                                
+                                # 使用右侧单应性矩阵转换到地图坐标
+                                if self.homography_right is not None:
+                                    foot_point = np.array([[foot_x, foot_y]], dtype=np.float32)
+                                    foot_point = np.array([foot_point])
+                                    transformed_point = cv2.perspectiveTransform(foot_point, self.homography_right)
+                                    map_x = transformed_point[0][0][0]
+                                    map_y = transformed_point[0][0][1]
+                                    map_coords = (map_x, map_y)
+                            break
+
                 results.append({
                     'id': person_id,
                     'frame': frame_id,
-                    'similarity': sim
+                    'similarity': sim,
+                    'foot_coords': foot_coords,       # 视频中的足底坐标
+                    'map_coords': map_coords          # 转换后的地图坐标
                 })
+
             except Exception as e:
                 print(f"跳过特征文件 {feat_file}: {e}")
                 continue
@@ -675,6 +718,20 @@ class PersonSearchApp(QWidget):
             painter.drawText(scaled_point + QPoint(10, -10), "选中目标")
         else:
             print("地图对应点为空")
+
+        # 绘制候选行人坐标点，存储在 self.candidate_persons 中。
+        # self.candidate_persons是list，保存了所有的候选。设每个元素为candidate
+        # candidate是字典，key='map_coords'
+        if self.candidate_persons is not None:
+            for i, candidate in enumerate(self.candidate_persons[:20]):
+                map_x, map_y = candidate['map_coords']
+                display_x = map_x * scale_ratio
+                display_y = map_y * scale_ratio
+                print("正在绘制候选行人的坐标点:({}, {})".format(display_x, display_y))
+                scaled_point = QPoint(int(display_x), int(display_y))
+                painter.drawEllipse(scaled_point, 5, 5)
+        else:
+            print("候选行人坐标点为空")
         
         painter.end()
         label.setPixmap(scaled_pixmap)
@@ -684,22 +741,23 @@ class PersonSearchApp(QWidget):
         # 保持引用防止窗口立即被销毁
         self.map_window = map_dialog
 
-    def load_homography(self):
+    def load_homography(self, side):
         # 尝试找到JSON文件
-        json_files = glob.glob(os.path.join(self.seq_path_left, '*.json'))
+        seq_path = self.seq_path_left if side == 'left' else self.seq_path_right
+        json_files = glob.glob(os.path.join(seq_path, '*.json'))
         if json_files:
-            json_file = json_files[0]
-            try:
-                with open(json_file, 'r') as f:
-                    data = json.load(f)
+            with open(json_files[0], 'r') as f:
+                data = json.load(f)
+                if side == 'left':
                     self.homography = np.array(data["homography"])
                     self.map_points = data["map_points"]
                     self.monitor_points = data["monitor_points"]
                     self.map_image_size = data["map_image_size"]
                     self.monitor_image_size = data["monitor_image_size"]
                     print("单应性矩阵已加载成功，矩阵为：\n{}".format(np.round(self.homography, 1).tolist()))
-            except Exception as e:
-                print(f"加载单应矩阵和对应点时出错: {e}")
+                else:
+                    self.homography_right = np.array(data["homography"])
+                    print("{}侧画面的单应性矩阵加载成功：{}".format(side, self.homography))
         else:
             print("未找到json文件：{}".format(json_files))
             print("视频路径为：{}".format(self.seq_path_left))
