@@ -678,33 +678,12 @@ class PersonSearchApp(QWidget):
         map_dialog.setLayout(layout)
         map_dialog.setFixedSize(scaled_pixmap.size())
 
-        # 绘制对应点
+        # 创建画笔
         painter = QPainter(scaled_pixmap)
         painter.setRenderHint(QPainter.Antialiasing)
-        pen = QPen(QColor(255, 0, 0), 5)
-        painter.setPen(pen)
-        if self.homography is not None and self.map_points:
-            print("正在绘制从json文件中加载的对应点")
-            for i, point in enumerate(self.map_points):
-                norm_x, norm_y = point
-                original_x = norm_x * self.map_image_size[0]
-                original_y = norm_y * self.map_image_size[1]
-                display_x = original_x * scale_ratio
-                display_y = original_y * scale_ratio
-                scaled_point = QPoint(int(display_x), int(display_y))
-                painter.drawEllipse(scaled_point, 5, 5)
-                painter.drawText(scaled_point + QPoint(10, -10), str(i + 1))
-        else:
-            if self.homography is None:
-                print("无法绘制对应点，因为单应性矩阵为空")
-            elif not self.map_points:
-                print("无法绘制对应点，因为map_points为空")
-            else:
-                print("无法绘制对应点，原因未知")
 
-        # 在绘制完参考点的代码块后添加
+        # 绘制选中行人的地图坐标
         if self.selected_person_map_coords is not None:
-            # 绘制选中行人的地图坐标（用不同颜色区分）
             print("正在绘制监控画面中选中的点")
             pen = QPen(QColor(0, 255, 0), 6)  # 绿色
             painter.setPen(pen)
