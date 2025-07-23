@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>地图查看器</title>
+    <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+        }
+        
+        #map-container {
+            position: relative;
+            max-width: 100%;
+            max-height: 100%;
+        }
+        
+        #map {
+            max-width: 100%;
+            max-height: 100vh;
+            display: block;
+        }
+        
+        .camera-icon {
+            position: absolute;
+            font-size: 24px;  /* 图标大小 */
+            color: #ff0000;   /* 红色图标 */
+            cursor: pointer;
+            z-index: 10;
+            transform: translate(-50%, -50%); /* 居中定位 */
+        }
+        
+        #preview-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+        }
+        
+        #preview-image {
+            max-width: 90%;
+            max-height: 90%;
+        }
+        
+        #close-preview {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            font-size: 30px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="map-container">
+        <img id="map" src="datasets/yisuo/map.png" alt="地图">
+        <i class="fa fa-video-camera camera-icon" 
+            id="cameraIcon" 
+            style="left: 1100px; top: 1600px;"></i>
+    </div>
+    
+    <div id="preview-container">
+        <span id="close-preview">&times;</span>
+        <img id="preview-image" src="" alt="预览图">
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const map = document.getElementById('map');
+            const mapContainer = document.getElementById('map-container');
+            const cameraIcon = document.getElementById('cameraIcon');
+            const previewContainer = document.getElementById('preview-container');
+            const previewImage = document.getElementById('preview-image');
+            const closePreview = document.getElementById('close-preview');
+            
+            // 调整地图大小，使长边占满屏幕
+            function resizeMap() {
+                const windowWidth = window.innerWidth;
+                const windowHeight = window.innerHeight;
+                const mapRatio = 1152 / 1656; // 地图宽高比
+                
+                if (windowWidth / windowHeight > mapRatio) {
+                    // 窗口比地图更宽，高度占满
+                    map.style.height = '100vh';
+                    map.style.width = 'auto';
+                } else {
+                    // 窗口比地图更高，宽度占满
+                    map.style.width = '100%';
+                    map.style.height = 'auto';
+                }
+                
+                // 调整图标位置
+                adjustIconPosition();
+            }
+            
+            // 根据地图实际显示尺寸调整图标位置
+            function adjustIconPosition() {
+                const mapRect = map.getBoundingClientRect();
+                const scaleX = mapRect.width / 1152;
+                const scaleY = mapRect.height / 1656;
+                
+                const iconX = 1100 * scaleX;
+                const iconY = 1600 * scaleY;
+                
+                cameraIcon.style.left = `${iconX}px`;
+                cameraIcon.style.top = `${iconY}px`;
+            }
+            
+            // 点击摄像头图标
+            cameraIcon.addEventListener('click', function() {
+                previewImage.src = 'datasets/yisuo/人脸追踪01/人脸追踪1_First_Frame.png';
+                previewContainer.style.display = 'flex';
+            });
+            
+            // 关闭预览
+            closePreview.addEventListener('click', function() {
+                previewContainer.style.display = 'none';
+            });
+            
+            // 点击预览容器其他区域也关闭
+            previewContainer.addEventListener('click', function(e) {
+                if (e.target === previewContainer) {
+                    previewContainer.style.display = 'none';
+                }
+            });
+            
+            // 初始调整大小
+            resizeMap();
+            
+            // 窗口大小改变时重新调整
+            window.addEventListener('resize', resizeMap);
+            
+            // 确保地图加载后调整图标位置
+            map.addEventListener('load', resizeMap);
+        });
+    </script>
+</body>
+</html>
