@@ -22,10 +22,16 @@ def load_npy_feature(file_path):
         return None
 
 def cosine_similarity(vec1, vec2):
+    # 确保为一维向量
+    vec1 = vec1.flatten()
+    vec2 = vec2.flatten()
+
     """计算两个向量的余弦相似度"""
     if vec1 is None or vec2 is None:
+        print("向量为空")
         return -1.0
     if vec1.ndim != 1 or vec2.ndim != 1:
+        print("维度错误")
         return -1.0
     if len(vec1) != len(vec2):
         return -1.0
@@ -35,8 +41,11 @@ def cosine_similarity(vec1, vec2):
     norm2 = np.linalg.norm(vec2)
     
     if norm1 == 0 or norm2 == 0:
+        print("模长为0")
         return 0.0
-    return float(dot_product / (norm1 * norm2))
+
+    result = float(dot_product / (norm1 * norm2))
+    return result
 
 def get_feature_path_by_id(detection_id, frame_id=1):
     """根据检测ID和帧ID生成特征文件路径"""
@@ -76,11 +85,15 @@ def find_similar():
     source_feature = load_npy_feature(source_feature_path)
     if source_feature is None:
         return jsonify({"error": "无法解析源特征文件"}), 500
+    else:
+        print("已成功加载所选行人的reid特征：{}".format(source_feature_path))
     
     # 2. 遍历目标目录中的所有特征文件
     target_files = glob(os.path.join(REID_FEATURES_DIR, "*.npy"))
     if not target_files:
         return jsonify({"error": "目标特征目录中没有文件"}), 404
+    else:
+        print("找到{}条候选特征".format(len(target_files)))
     
     max_similarity = -1.0
     most_similar_file = None
