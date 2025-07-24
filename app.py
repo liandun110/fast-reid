@@ -124,8 +124,35 @@ def find_similar():
         if similarity > max_similarity:
             max_similarity = similarity
             most_similar_file = file_name
+
+    # 3. 解析最相似文件的元信息并在后端打印（核心新增逻辑）
+    if most_similar_file:
+        # 解析文件名：假设格式为 {detection_id:06d}_c1s1_{frame_id:06d}_{conf}.npy
+        # 例如：000002_c1s1_000005_0.9765.npy
+        file_name = most_similar_file
+        name_match = re.match(r'^(\d{6})_c1s1_(\d{6})_[\d.]+.npy$', file_name)
+        if name_match:
+            similar_detection_id = name_match.group(1)  # 提取detectionID
+            frame_id = name_match.group(2)              # 提取帧号
+        else:
+            similar_detection_id = "未知"
+            frame_id = "未知"
+        
+        # 提取视频名：从特征文件路径中解析（假设路径格式为 .../视频名/reid_features/文件名）
+        # 例如：REID_FEATURES_DIR = "datasets/yisuo/人脸追踪02/reid_features"
+        # 则视频名为 "人脸追踪02"
+        video_name = os.path.basename(os.path.dirname(REID_FEATURES_DIR))
+        
+        # 在后端打印信息
+        print("\n===== 最相似特征信息 =====")
+        print(f"最相似特征所在视频：{video_name}")
+        print(f"所在帧号：{frame_id}")
+        print(f"对应detectionID：{similar_detection_id}")
+        print(f"相似度：{round(max_similarity, 6)} ({max_similarity * 100:.2f}%)")
+        print(f"特征文件：{most_similar_file}")
+        print("==========================\n")
     
-    # 3. 返回结果（包含最相似和前N个结果）
+    # 4. 返回结果（包含最相似和前N个结果）
     return jsonify({
         "source_id": detection_id,
         "most_similar": {
