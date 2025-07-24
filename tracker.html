@@ -51,9 +51,24 @@
             z-index: 100;
         }
         
-        #preview-image {
+        #preview-wrapper {
+            position: relative;
             max-width: 90%;
             max-height: 90%;
+        }
+        
+        #preview-image {
+            max-width: 100%;
+            max-height: 100%;
+        }
+        
+        #detection-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            max-width: 100%;
+            max-height: 100%;
+            cursor: pointer;
         }
         
         #close-preview {
@@ -63,6 +78,20 @@
             color: white;
             font-size: 30px;
             cursor: pointer;
+            z-index: 110;
+        }
+
+        .detection-info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            z-index: 105;
         }
     </style>
 </head>
@@ -76,7 +105,13 @@
     
     <div id="preview-container">
         <span id="close-preview">&times;</span>
-        <img id="preview-image" src="" alt="预览图">
+        <div id="preview-wrapper">
+            <img id="preview-image" src="" alt="预览图">
+            <canvas id="detection-canvas"></canvas>
+        </div>
+        <div class="detection-info">
+            点击行人查看检测框 | 共 <span id="person-count">0</span> 个行人
+        </div>
     </div>
 
     <script>
@@ -86,7 +121,18 @@
             const cameraIcon = document.getElementById('cameraIcon');
             const previewContainer = document.getElementById('preview-container');
             const previewImage = document.getElementById('preview-image');
+            const previewWrapper = document.getElementById('preview-wrapper');
+            const detectionCanvas = document.getElementById('detection-canvas');
+            const ctx = detectionCanvas.getContext('2d');
             const closePreview = document.getElementById('close-preview');
+            const personCountElement = document.getElementById('person-count');
+            
+            // 存储检测数据
+            let detectionData = [];
+            let selectedPersonId = null;
+            let imageWidth = 0;
+            let imageHeight = 0;
+            let scaleFactor = 1;
             
             // 调整地图大小，使长边占满屏幕
             function resizeMap() {
@@ -121,29 +167,185 @@
                 cameraIcon.style.top = `${iconY}px`;
             }
             
+            // 解析YOLO检测结果
+            function parseDetectionResults(text) {
+                const lines = text.split('\n');
+                const results = [];
+                
+                lines.forEach(line => {
+                    line = line.trim();
+                    if (!line) return;
+                    
+                    const parts = line.split(',');
+                    if (parts.length !== 10) return;
+                    
+                    // 解析每行数据
+                    const frameId = parseInt(parts[0]);
+                    const xCenter = parseFloat(parts[2]);
+                    const yCenter = parseFloat(parts[3]);
+                    const width = parseFloat(parts[4]);
+                    const height = parseFloat(parts[5]);
+                    const confidence = parseFloat(parts[6]);
+                    const detectionId = parseInt(parts[9]);
+                    
+                    // 我们只关心第一帧的检测结果
+                    if (frameId === 1) {
+                        results.push({
+                            frameId,
+                            xCenter,
+                            yCenter,
+                            width,
+                            height,
+                            confidence,
+                            detectionId
+                        });
+                    }
+                });
+                
+                return results;
+            }
+            
+            // 加载检测数据
+            function loadDetectionData() {
+                return fetch('datasets/yisuo/人脸追踪01/det/det_yolov8x.txt')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('无法加载检测数据文件');
+                        }
+                        return response.text();
+                    })
+                    .then(text => {
+                        detectionData = parseDetectionResults(text);
+                        personCountElement.textContent = detectionData.length;
+                        return detectionData;
+                    })
+                    .catch(error => {
+                        console.error('加载检测数据出错:', error);
+                        personCountElement.textContent = '加载失败';
+                        return [];
+                    });
+            }
+            
+            // 绘制检测框
+            function drawDetections() {
+                // 清除画布
+                ctx.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+                
+                // 获取图像显示尺寸
+                const rect = previewImage.getBoundingClientRect();
+                const wrapperRect = previewWrapper.getBoundingClientRect();
+                
+                // 计算缩放因子和偏移量
+                scaleFactor = rect.width / imageWidth;
+                const offsetX = rect.left - wrapperRect.left;
+                const offsetY = rect.top - wrapperRect.top;
+                
+                // 设置画布尺寸匹配图像显示尺寸
+                detectionCanvas.width = rect.width;
+                detectionCanvas.height = rect.height;
+                detectionCanvas.style.width = `${rect.width}px`;
+                detectionCanvas.style.height = `${rect.height}px`;
+                
+                // 绘制所有检测框
+                detectionData.forEach(person => {
+                    // 计算实际坐标 (YOLO输出是归一化坐标)
+                    const x = (person.xCenter - person.width / 2) * imageWidth * scaleFactor;
+                    const y = (person.yCenter - person.height / 2) * imageHeight * scaleFactor;
+                    const w = person.width * imageWidth * scaleFactor;
+                    const h = person.height * imageHeight * scaleFactor;
+                    
+                    // 绘制边框
+                    ctx.strokeStyle = person.detectionId === selectedPersonId ? '#00ff00' : '#ff0000';
+                    ctx.lineWidth = person.detectionId === selectedPersonId ? 3 : 2;
+                    ctx.strokeRect(x, y, w, h);
+                    
+                    // 绘制ID标签
+                    ctx.fillStyle = person.detectionId === selectedPersonId ? 'rgba(0, 255, 0, 0.7)' : 'rgba(255, 0, 0, 0.7)';
+                    ctx.fillRect(x, y - 20, 40, 20);
+                    ctx.fillStyle = 'white';
+                    ctx.font = '12px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(`ID: ${person.detectionId}`, x + 20, y - 10);
+                });
+            }
+            
+            // 处理预览图像点击事件
+            function handleImageClick(e) {
+                const rect = detectionCanvas.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                const clickY = e.clientY - rect.top;
+                
+                // 检查点击位置是否在某个行人框内
+                let selected = null;
+                detectionData.forEach(person => {
+                    const x = (person.xCenter - person.width / 2) * imageWidth * scaleFactor;
+                    const y = (person.yCenter - person.height / 2) * imageHeight * scaleFactor;
+                    const w = person.width * imageWidth * scaleFactor;
+                    const h = person.height * imageHeight * scaleFactor;
+                    
+                    if (clickX >= x && clickX <= x + w && clickY >= y && clickY <= y + h) {
+                        selected = person.detectionId;
+                    }
+                });
+                
+                // 更新选中状态并重新绘制
+                selectedPersonId = selected !== selectedPersonId ? selected : null;
+                drawDetections();
+            }
+            
             // 点击摄像头图标
             cameraIcon.addEventListener('click', function() {
                 previewImage.src = 'datasets/yisuo/人脸追踪01/人脸追踪1_First_Frame.png';
                 previewContainer.style.display = 'flex';
+                selectedPersonId = null;
+                
+                // 加载检测数据
+                loadDetectionData().then(() => {
+                    // 等待图像加载完成后再绘制检测框
+                    previewImage.onload = function() {
+                        imageWidth = this.naturalWidth;
+                        imageHeight = this.naturalHeight;
+                        drawDetections();
+                    };
+                    
+                    // 如果图像已经缓存，手动触发onload
+                    if (previewImage.complete) {
+                        previewImage.onload();
+                    }
+                });
             });
             
             // 关闭预览
             closePreview.addEventListener('click', function() {
                 previewContainer.style.display = 'none';
+                detectionData = [];
+                selectedPersonId = null;
             });
             
             // 点击预览容器其他区域也关闭
             previewContainer.addEventListener('click', function(e) {
                 if (e.target === previewContainer) {
                     previewContainer.style.display = 'none';
+                    detectionData = [];
+                    selectedPersonId = null;
+                }
+            });
+            
+            // 点击检测画布（即图像区域）
+            detectionCanvas.addEventListener('click', handleImageClick);
+            
+            // 窗口大小改变时重新调整
+            window.addEventListener('resize', function() {
+                resizeMap();
+                // 如果预览窗口打开，重新绘制检测框
+                if (previewContainer.style.display === 'flex' && detectionData.length > 0) {
+                    drawDetections();
                 }
             });
             
             // 初始调整大小
             resizeMap();
-            
-            // 窗口大小改变时重新调整
-            window.addEventListener('resize', resizeMap);
             
             // 确保地图加载后调整图标位置
             map.addEventListener('load', resizeMap);
