@@ -93,6 +93,23 @@
             font-size: 14px;
             z-index: 105;
         }
+
+        .reid-filename {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(255, 255, 255, 0.3);
+            font-size: 13px;
+        }
+        .reid-exists {
+            margin-top: 4px;
+            font-size: 13px;
+        }
+        .reid-exists.exists {
+            color: #4CAF50; /* 存在 - 绿色 */
+        }
+        .reid-exists.not-exists {
+            color: #f44336; /* 不存在 - 红色 */
+        }
     </style>
 </head>
 <body>
@@ -111,6 +128,8 @@
         </div>
         <div class="detection-info">
             点击行人查看检测框 | 共 <span id="person-count">0</span> 个行人
+            <div class="reid-filename" id="reid-filename">未选中行人</div>
+            <div class="reid-exists" id="reid-exists"></div>
         </div>
     </div>
 
@@ -126,6 +145,8 @@
             const ctx = detectionCanvas.getContext('2d');
             const closePreview = document.getElementById('close-preview');
             const personCountElement = document.getElementById('person-count');
+            const reidFilenameElement = document.getElementById('reid-filename'); // 新增元素引用
+            const reidExistsElement = document.getElementById('reid-exists'); // reid特征是否存在
             
             // 存储检测数据
             let detectionData = [];
@@ -133,6 +154,8 @@
             let imageWidth = 0;
             let imageHeight = 0;
             let scaleFactor = 1;
+            // 从预览图路径提取帧名称
+            const frameName = '人脸追踪1_First_Frame'; // 从图片路径提取的帧名称
             
             // 调整地图大小，使长边占满屏幕
             function resizeMap() {
@@ -203,6 +226,32 @@
                 });
                 
                 return results;
+            }
+            
+            // 生成ReID特征文件名
+            function getReidFilename(person) {
+                // 按照规则生成文件名: f"{detection_id:06d}_c1s1_{frame_name}_{conf:.4f}.npy"
+                return `${person.detectionId.toString().padStart(6, '0')}_c1s1_${frameName}_${person.confidence.toFixed(4)}.npy`;
+            }
+
+            // 生成ReID特征文件路径（修正frame_name为6位数字）
+            function getReidFilePath(person) {
+                // frame_name为6位数字（第一帧为000001）
+                const frameName = person.frameId.toString().padStart(6, '0'); // 从行人数据的frameId生成6位数字
+                // 文件名格式：{detection_id:06d}_c1s1_{frame_name}_{conf:.4f}.npy
+                const filename = `${person.detectionId.toString().padStart(6, '0')}_c1s1_${frameName}_${person.confidence.toFixed(4)}.npy`;
+                return `datasets/yisuo/人脸追踪01/reid_features/${filename}`; // 完整路径
+            }
+
+            // 检查ReID文件是否存在
+            function checkReidFileExists(filePath) {
+                return fetch(filePath, { method: 'HEAD' })
+                    .then(response => {
+                        return response.ok; // 存在返回true，否则false
+                    })
+                    .catch(() => {
+                        return false; // 请求失败视为不存在
+                    });
             }
             
             // 加载检测数据
@@ -278,6 +327,7 @@
                 
                 // 检查点击位置是否在某个行人框内
                 let selected = null;
+                let selectedPerson = null;
                 detectionData.forEach(person => {
                     const x = (person.xCenter - person.width / 2) * imageWidth * scaleFactor;
                     const y = (person.yCenter - person.height / 2) * imageHeight * scaleFactor;
@@ -286,11 +336,34 @@
                     
                     if (clickX >= x && clickX <= x + w && clickY >= y && clickY <= y + h) {
                         selected = person.detectionId;
+                        selectedPerson = person;
                     }
                 });
                 
                 // 更新选中状态并重新绘制
                 selectedPersonId = selected !== selectedPersonId ? selected : null;
+                
+                // 新增：检查文件存在性并更新显示
+                if (selectedPersonId && selectedPerson) {
+                    const filePath = getReidFilePath(selectedPerson);
+                    const filename = filePath.split('/').pop(); // 提取文件名
+                    reidFilenameElement.textContent = `ReID文件: ${filename}`;
+                    
+                    // 检查文件是否存在
+                    checkReidFileExists(filePath).then(exists => {
+                        if (exists) {
+                            reidExistsElement.textContent = "状态：文件存在";
+                            reidExistsElement.className = "reid-exists exists";
+                        } else {
+                            reidExistsElement.textContent = "状态：文件不存在";
+                            reidExistsElement.className = "reid-exists not-exists";
+                        }
+                    });
+                } else {
+                    reidFilenameElement.textContent = '未选中行人';
+                    reidExistsElement.textContent = ''; // 清空状态
+                }
+                
                 drawDetections();
             }
             
@@ -299,6 +372,7 @@
                 previewImage.src = 'datasets/yisuo/人脸追踪01/人脸追踪1_First_Frame.png';
                 previewContainer.style.display = 'flex';
                 selectedPersonId = null;
+                reidFilenameElement.textContent = '未选中行人'; // 重置显示
                 
                 // 加载检测数据
                 loadDetectionData().then(() => {
@@ -321,6 +395,8 @@
                 previewContainer.style.display = 'none';
                 detectionData = [];
                 selectedPersonId = null;
+                reidFilenameElement.textContent = '未选中行人'; // 新增
+                reidExistsElement.textContent = ''; // 新增
             });
             
             // 点击预览容器其他区域也关闭
@@ -329,6 +405,8 @@
                     previewContainer.style.display = 'none';
                     detectionData = [];
                     selectedPersonId = null;
+                    reidFilenameElement.textContent = '未选中行人'; // 新增
+                    reidExistsElement.textContent = ''; // 新增
                 }
             });
             
