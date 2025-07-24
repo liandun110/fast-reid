@@ -344,16 +344,41 @@
                 selectedPersonId = selected !== selectedPersonId ? selected : null;
                 
                 // 新增：检查文件存在性并更新显示
+                // 在handleImageClick函数中，当选中行人后添加：
                 if (selectedPersonId && selectedPerson) {
                     const filePath = getReidFilePath(selectedPerson);
-                    const filename = filePath.split('/').pop(); // 提取文件名
+                    const filename = filePath.split('/').pop();
                     reidFilenameElement.textContent = `ReID文件: ${filename}`;
                     
-                    // 检查文件是否存在
                     checkReidFileExists(filePath).then(exists => {
                         if (exists) {
-                            reidExistsElement.textContent = "状态：文件存在";
+                            reidExistsElement.textContent = "状态：文件存在，正在查找相似特征...";
                             reidExistsElement.className = "reid-exists exists";
+                            
+                            // 调用后端API查找相似特征
+                            fetch('http://localhost:5000/api/find_similar', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({ detection_id: selectedPersonId })
+                            })
+                            .then(response => {
+                                if (!response.ok) throw new Error('请求失败');
+                                return response.json();
+                            })
+                            .then(result => {
+                                if (result.error) {
+                                    reidExistsElement.textContent = `状态：${result.error}`;
+                                } else {
+                                    reidExistsElement.textContent = 
+                                        `最相似: ${result.most_similar.file_name} (${result.most_similar.similarity_percent})`;
+                                }
+                            })
+                            .catch(error => {
+                                console.error('API调用错误:', error);
+                                reidExistsElement.textContent = "状态：查找相似特征失败";
+                            });
                         } else {
                             reidExistsElement.textContent = "状态：文件不存在";
                             reidExistsElement.className = "reid-exists not-exists";
@@ -361,7 +386,7 @@
                     });
                 } else {
                     reidFilenameElement.textContent = '未选中行人';
-                    reidExistsElement.textContent = ''; // 清空状态
+                    reidExistsElement.textContent = '';
                 }
                 
                 drawDetections();
