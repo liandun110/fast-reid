@@ -118,6 +118,12 @@
         <i class="fa fa-video-camera camera-icon" 
             id="cameraIcon" 
             style="left: 1100px; top: 1600px;"></i>
+        <i class="fa fa-video-camera camera-icon" 
+            id="cameraIcon2" 
+            data-camera-id="02"
+            data-image-path="datasets/yisuo/人脸追踪02/人脸追踪02_First_Frame.png"
+            data-det-path="datasets/yisuo/人脸追踪02/det/det_yolov8x.txt"
+            data-reid-path="datasets/yisuo/人脸追踪02/reid_features/"></i>
     </div>
     
     <div id="preview-container">
@@ -156,6 +162,31 @@
             let scaleFactor = 1;
             // 从预览图路径提取帧名称
             const frameName = '人脸追踪1_First_Frame'; // 从图片路径提取的帧名称
+
+            // 新增：加载摄像头位置数据
+            function loadCameraPositions() {
+                return fetch('datasets/yisuo/人脸追踪02/geo.json')
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error('无法加载摄像头位置文件');
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        // 设置第二个摄像头位置
+                        const camera2 = document.getElementById('cameraIcon2');
+                        if (camera2 && data.camera_pos && data.camera_pos.length === 2) {
+                            // 存储数组中的x和y（[x, y]）
+                            camera2.dataset.x = data.camera_pos[0]; // 第一个元素为x
+                            camera2.dataset.y = data.camera_pos[1]; // 第二个元素为y
+                            adjustIconPosition(); // 重新调整位置
+                        }
+                    })
+                    .catch(error => {
+                        console.error('加载摄像头位置出错:', error);
+                        return null;
+                    });
+            }
             
             // 调整地图大小，使长边占满屏幕
             function resizeMap() {
@@ -188,6 +219,15 @@
                 
                 cameraIcon.style.left = `${iconX}px`;
                 cameraIcon.style.top = `${iconY}px`;
+
+                // 第二个摄像头位置
+                const camera2 = document.getElementById('cameraIcon2');
+                if (camera2 && camera2.dataset.x && camera2.dataset.y) {
+                    const iconX2 = parseFloat(camera2.dataset.x) * scaleX;
+                    const iconY2 = parseFloat(camera2.dataset.y) * scaleY;
+                    camera2.style.left = `${iconX2}px`;
+                    camera2.style.top = `${iconY2}px`;
+                }
             }
             
             // 解析YOLO检测结果
@@ -234,13 +274,21 @@
                 return `${person.detectionId.toString().padStart(6, '0')}_c1s1_${frameName}_${person.confidence.toFixed(4)}.npy`;
             }
 
-            // 生成ReID特征文件路径（修正frame_name为6位数字）
             function getReidFilePath(person) {
-                // frame_name为6位数字（第一帧为000001）
-                const frameName = person.frameId.toString().padStart(6, '0'); // 从行人数据的frameId生成6位数字
-                // 文件名格式：{detection_id:06d}_c1s1_{frame_name}_{conf:.4f}.npy
+                // 获取当前选中摄像头的ReID路径
+                const activeCamera = selectedPersonId ? 
+                    (detectionData.find(p => p.detectionId === selectedPersonId) ? 
+                        document.querySelector(`.camera-icon[data-camera-id="${person.frameId === 1 ? '01' : '02'}"]`) : 
+                        null) : 
+                    null;
+                
+                const reidBasePath = activeCamera ? 
+                    activeCamera.dataset.currentReidPath : 
+                    'datasets/yisuo/人脸追踪01/reid_features/';
+                
+                const frameName = person.frameId.toString().padStart(6, '0');
                 const filename = `${person.detectionId.toString().padStart(6, '0')}_c1s1_${frameName}_${person.confidence.toFixed(4)}.npy`;
-                return `datasets/yisuo/人脸追踪01/reid_features/${filename}`; // 完整路径
+                return `${reidBasePath}${filename}`;
             }
 
             // 检查ReID文件是否存在
@@ -254,9 +302,9 @@
                     });
             }
             
-            // 加载检测数据
-            function loadDetectionData() {
-                return fetch('datasets/yisuo/人脸追踪01/det/det_yolov8x.txt')
+            // 修改：接受检测文件路径参数
+            function loadDetectionData(detFilePath) {
+                return fetch(detFilePath)
                     .then(response => {
                         if (!response.ok) {
                             throw new Error('无法加载检测数据文件');
@@ -392,28 +440,38 @@
                 drawDetections();
             }
             
-            // 点击摄像头图标
-            cameraIcon.addEventListener('click', function() {
-                previewImage.src = 'datasets/yisuo/人脸追踪01/人脸追踪1_First_Frame.png';
+            // 通用摄像头点击处理函数
+            function handleCameraClick(e) {
+                const cameraId = e.currentTarget.dataset.cameraId || "01";
+                const imagePath = e.currentTarget.dataset.imagePath || 'datasets/yisuo/人脸追踪01/人脸追踪1_First_Frame.png';
+                const detPath = e.currentTarget.dataset.detPath || 'datasets/yisuo/人脸追踪01/det/det_yolov8x.txt';
+                const reidPath = e.currentTarget.dataset.reidPath || 'datasets/yisuo/人脸追踪01/reid_features/';
+                
+                // 存储当前摄像头的路径信息
+                e.currentTarget.dataset.currentReidPath = reidPath;
+                
+                previewImage.src = imagePath;
                 previewContainer.style.display = 'flex';
                 selectedPersonId = null;
-                reidFilenameElement.textContent = '未选中行人'; // 重置显示
+                reidFilenameElement.textContent = '未选中行人';
                 
-                // 加载检测数据
-                loadDetectionData().then(() => {
-                    // 等待图像加载完成后再绘制检测框
+                // 加载对应摄像头的检测数据
+                loadDetectionData(detPath).then(() => {
                     previewImage.onload = function() {
                         imageWidth = this.naturalWidth;
                         imageHeight = this.naturalHeight;
                         drawDetections();
                     };
                     
-                    // 如果图像已经缓存，手动触发onload
                     if (previewImage.complete) {
                         previewImage.onload();
                     }
                 });
-            });
+            }
+
+            // 绑定摄像头点击事件
+            cameraIcon.addEventListener('click', handleCameraClick);
+            document.getElementById('cameraIcon2').addEventListener('click', handleCameraClick);
             
             // 关闭预览
             closePreview.addEventListener('click', function() {
@@ -450,6 +508,9 @@
             // 初始调整大小
             resizeMap();
             
+            // 新增：加载摄像头位置
+            loadCameraPositions();
+
             // 确保地图加载后调整图标位置
             map.addEventListener('load', resizeMap);
         });
