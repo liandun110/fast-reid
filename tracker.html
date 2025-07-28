@@ -38,6 +38,38 @@
             transform: translate(-50%, -50%); /* 居中定位 */
         }
         
+        /* 新增：相似行人裁剪图样式 */
+        .similar-person {
+            position: absolute;
+            width: 100px;
+            height: 150px;
+            border: 2px solid #4CAF50;
+            border-radius: 4px;
+            background-color: white;
+            overflow: hidden;
+            z-index: 20;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .similar-person img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .similar-person .similarity {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background-color: rgba(0,0,0,0.7);
+            color: white;
+            font-size: 12px;
+            text-align: center;
+            padding: 2px 0;
+        }
+        
         #preview-container {
             position: fixed;
             top: 0;
@@ -111,7 +143,6 @@
             color: #f44336; /* 不存在 - 红色 */
         }
         
-        /* 新增提示信息样式 */
         #click-notification {
             position: fixed;
             top: 20px;
@@ -131,6 +162,21 @@
         
         #click-notification.show {
             opacity: 1;
+        }
+        
+        /* 新增：清除相似结果按钮 */
+        #clear-similar {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(255, 0, 0, 0.8);
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            z-index: 30;
+            display: none;
         }
     </style>
 </head>
@@ -153,8 +199,9 @@
         </div>
     </div>
     
-    <!-- 新增提示信息元素 -->
     <div id="click-notification">点击成功</div>
+    <!-- 新增：清除相似结果按钮 -->
+    <button id="clear-similar">清除相似结果</button>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -170,17 +217,19 @@
             const personCountElement = document.getElementById('person-count');
             const reidFilenameElement = document.getElementById('reid-filename');
             const reidExistsElement = document.getElementById('reid-exists');
-            // 新增提示信息元素引用
             const clickNotification = document.getElementById('click-notification');
+            const clearSimilarBtn = document.getElementById('clear-similar');
             
             // 存储检测数据和状态
             let detectionData = [];
             let selectedPersonId = null;
+            let selectedCameraDir = null;
             let imageWidth = 0;
             let imageHeight = 0;
             let scaleFactor = 1;
+            let similarPersons = []; // 存储相似行人数据
             
-            // 摄像头配置 - 集中管理所有摄像头信息
+            // 摄像头配置
             const cameras = [
                 { id: '01', dir: '人脸追踪01' },
                 { id: '02', dir: '人脸追踪02' },
@@ -192,75 +241,64 @@
                 { id: '08', dir: '人脸追踪08' },
                 { id: '09', dir: '人脸追踪09' },
                 { id: '10', dir: '人脸追踪10' },
-                // 新增摄像头只需在这里添加配置
             ];
 
-            // 初始化 - 创建所有摄像头图标并加载位置
+            // 初始化摄像头
             function initCameras() {
                 cameras.forEach(camera => {
-                    // 创建摄像头图标
                     const icon = document.createElement('i');
                     icon.className = 'fa fa-video-camera camera-icon';
                     icon.dataset.cameraId = camera.id;
-                    icon.dataset.cameraDir = camera.dir; // 存储目录信息
+                    icon.dataset.cameraDir = camera.dir;
                     mapContainer.appendChild(icon);
-                    
-                    // 加载该摄像头的位置信息
                     loadCameraPosition(icon, camera.dir);
                 });
             }
             
-            // 加载指定摄像头的位置信息
+            // 加载摄像头位置
             function loadCameraPosition(icon, cameraDir) {
                 const geoPath = `datasets/yisuo/${cameraDir}/geo.json`;
                 
                 fetch(geoPath)
                     .then(response => {
-                        if (!response.ok) {
-                            throw new Error(`无法加载摄像头${cameraDir}的位置文件`);
-                        }
+                        if (!response.ok) throw new Error(`无法加载摄像头${cameraDir}的位置文件`);
                         return response.json();
                     })
                     .then(data => {
                         if (data.camera_pos && data.camera_pos.length === 2) {
-                            // 存储位置数据
                             icon.dataset.x = data.camera_pos[0];
                             icon.dataset.y = data.camera_pos[1];
-                            adjustIconPosition(); // 调整位置
+                            adjustIconPosition();
                         }
                     })
-                    .catch(error => {
-                        console.error('加载摄像头位置出错:', error);
-                    });
+                    .catch(error => console.error('加载摄像头位置出错:', error));
             }
             
-            // 调整地图大小，使长边占满屏幕
+            // 调整地图大小
             function resizeMap() {
                 const windowWidth = window.innerWidth;
                 const windowHeight = window.innerHeight;
-                const mapRatio = 1152 / 1656; // 地图宽高比
+                const mapRatio = 1152 / 1656;
                 
                 if (windowWidth / windowHeight > mapRatio) {
-                    // 窗口比地图更宽，高度占满
                     map.style.height = '100vh';
                     map.style.width = 'auto';
                 } else {
-                    // 窗口比地图更高，宽度占满
                     map.style.width = '100%';
                     map.style.height = 'auto';
                 }
                 
-                // 调整图标位置
                 adjustIconPosition();
+                // 重新定位相似行人图像
+                positionSimilarPersons();
             }
             
-            // 根据地图实际显示尺寸调整所有图标位置
+            // 调整图标位置
             function adjustIconPosition() {
                 const mapRect = map.getBoundingClientRect();
                 const scaleX = mapRect.width / 1152;
                 const scaleY = mapRect.height / 1656;
                 
-                // 调整所有摄像头图标位置
                 document.querySelectorAll('.camera-icon').forEach(icon => {
                     if (icon.dataset.x && icon.dataset.y) {
                         const iconX = parseFloat(icon.dataset.x) * scaleX;
@@ -283,7 +321,6 @@
                     const parts = line.split(',');
                     if (parts.length !== 10) return;
                     
-                    // 解析每行数据
                     const frameId = parseInt(parts[0]);
                     const xCenter = parseFloat(parts[2]);
                     const yCenter = parseFloat(parts[3]);
@@ -292,7 +329,6 @@
                     const confidence = parseFloat(parts[6]);
                     const detectionId = parseInt(parts[9]);
                     
-                    // 只关心第一帧的检测结果
                     if (frameId === 1) {
                         results.push({
                             frameId,
@@ -334,9 +370,7 @@
                 
                 return fetch(detPath)
                     .then(response => {
-                        if (!response.ok) {
-                            throw new Error('无法加载检测数据文件');
-                        }
+                        if (!response.ok) throw new Error('无法加载检测数据文件');
                         return response.text();
                     })
                     .then(text => {
@@ -353,38 +387,30 @@
             
             // 绘制检测框
             function drawDetections() {
-                // 清除画布
                 ctx.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
                 
-                // 获取图像显示尺寸
                 const rect = previewImage.getBoundingClientRect();
                 const wrapperRect = previewWrapper.getBoundingClientRect();
                 
-                // 计算缩放因子和偏移量
                 scaleFactor = rect.width / imageWidth;
                 const offsetX = rect.left - wrapperRect.left;
                 const offsetY = rect.top - wrapperRect.top;
                 
-                // 设置画布尺寸匹配图像显示尺寸
                 detectionCanvas.width = rect.width;
                 detectionCanvas.height = rect.height;
                 detectionCanvas.style.width = `${rect.width}px`;
                 detectionCanvas.style.height = `${rect.height}px`;
                 
-                // 绘制所有检测框
                 detectionData.forEach(person => {
-                    // 计算实际坐标 (YOLO输出是归一化坐标)
                     const x = (person.xCenter - person.width / 2) * imageWidth * scaleFactor;
                     const y = (person.yCenter - person.height / 2) * imageHeight * scaleFactor;
                     const w = person.width * imageWidth * scaleFactor;
                     const h = person.height * imageHeight * scaleFactor;
                     
-                    // 绘制边框
                     ctx.strokeStyle = person.detectionId === selectedPersonId ? '#00ff00' : '#ff0000';
                     ctx.lineWidth = person.detectionId === selectedPersonId ? 3 : 2;
                     ctx.strokeRect(x, y, w, h);
                     
-                    // 绘制ID标签
                     ctx.fillStyle = person.detectionId === selectedPersonId ? 'rgba(0, 255, 0, 0.7)' : 'rgba(255, 0, 0, 0.7)';
                     ctx.fillRect(x, y - 20, 40, 20);
                     ctx.fillStyle = 'white';
@@ -395,13 +421,180 @@
                 });
             }
             
+            // 新增：检查两个矩形是否重叠
+            function isOverlapping(rect1, rect2) {
+                return !(
+                    rect1.right < rect2.left ||
+                    rect1.left > rect2.right ||
+                    rect1.bottom < rect2.top ||
+                    rect1.top > rect2.bottom
+                );
+            }
+            
+            // 新增：计算相似行人图像位置，避免重叠
+            function calculatePosition(cameraIcon, existingElements) {
+                const mapRect = map.getBoundingClientRect();
+                const scaleX = mapRect.width / 1152;
+                const scaleY = mapRect.height / 1656;
+                
+                const baseX = parseFloat(cameraIcon.dataset.x) * scaleX;
+                const baseY = parseFloat(cameraIcon.dataset.y) * scaleY;
+                
+                // 图像尺寸
+                const imgWidth = 100;
+                const imgHeight = 150;
+                
+                // 尝试不同的位置偏移，寻找不重叠的位置
+                const offsets = [
+                    {x: imgWidth/2, y: 0},          // 右侧
+                    {x: -imgWidth/2, y: 0},         // 左侧
+                    {x: 0, y: imgHeight/2},         // 下方
+                    {x: 0, y: -imgHeight/2},        // 上方
+                    {x: imgWidth/2, y: imgHeight/2}, // 右下
+                    {x: -imgWidth/2, y: imgHeight/2}, // 左下
+                    {x: imgWidth/2, y: -imgHeight/2}, // 右上
+                    {x: -imgWidth/2, y: -imgHeight/2} // 左上
+                ];
+                
+                // 检查每个可能的位置
+                for (const offset of offsets) {
+                    const posX = baseX + offset.x;
+                    const posY = baseY + offset.y;
+                    
+                    const newRect = {
+                        left: posX - imgWidth/2,
+                        top: posY - imgHeight/2,
+                        right: posX + imgWidth/2,
+                        bottom: posY + imgHeight/2
+                    };
+                    
+                    // 检查是否与现有元素重叠
+                    let overlap = false;
+                    for (const elem of existingElements) {
+                        if (isOverlapping(newRect, elem.rect)) {
+                            overlap = true;
+                            break;
+                        }
+                    }
+                    
+                    // 检查是否在地图范围内
+                    if (!overlap && 
+                        newRect.left >= 0 && 
+                        newRect.top >= 0 && 
+                        newRect.right <= mapRect.width && 
+                        newRect.bottom <= mapRect.height) {
+                        return {
+                            x: posX,
+                            y: posY,
+                            rect: newRect
+                        };
+                    }
+                }
+                
+                // 如果所有位置都重叠，则使用基础位置并添加轻微偏移
+                return {
+                    x: baseX + imgWidth/2,
+                    y: baseY + imgHeight/2,
+                    rect: {
+                        left: baseX,
+                        top: baseY,
+                        right: baseX + imgWidth,
+                        bottom: baseY + imgHeight
+                    }
+                };
+            }
+            
+            // 新增：定位所有相似行人图像
+            function positionSimilarPersons() {
+                const existingElements = [];
+                document.querySelectorAll('.similar-person').forEach(elem => {
+                    const rect = elem.getBoundingClientRect();
+                    const mapRect = map.getBoundingClientRect();
+                    
+                    existingElements.push({
+                        id: elem.dataset.cameraId,
+                        rect: {
+                            left: rect.left - mapRect.left,
+                            top: rect.top - mapRect.top,
+                            right: rect.right - mapRect.left,
+                            bottom: rect.bottom - mapRect.top
+                        }
+                    });
+                });
+                
+                document.querySelectorAll('.similar-person').forEach(elem => {
+                    const cameraId = elem.dataset.cameraId;
+                    const cameraIcon = document.querySelector(`.camera-icon[data-camera-id="${cameraId}"]`);
+                    
+                    if (cameraIcon) {
+                        const position = calculatePosition(cameraIcon, existingElements.filter(e => e.id !== cameraId));
+                        elem.style.left = `${position.x}px`;
+                        elem.style.top = `${position.y}px`;
+                    }
+                });
+            }
+            
+            // 新增：显示相似行人
+            function showSimilarPersons(similarData) {
+                console.log(`成功调用showSimilarPersons，共加载 ${similarData.length} 个相似行人`);
+                // 先清除现有相似行人图像
+                clearSimilarPersons();
+                
+                similarPersons = similarData;
+                const existingElements = [];
+                
+                // 为每个摄像头创建相似行人图像元素
+                similarData.forEach(item => {
+                    const cameraIcon = document.querySelector(`.camera-icon[data-camera-dir="${item.camera_dir}"]`);
+                    if (!cameraIcon) return;
+                    
+                    const position = calculatePosition(cameraIcon, existingElements);
+                    console.log(`行人在摄像头 [${cameraIcon.dataset.cameraId}] 中的位置：X=${position.x.toFixed(2)}, Y=${position.y.toFixed(2)}`);
+                    
+                    const similarElem = document.createElement('div');
+                    similarElem.className = 'similar-person';
+                    similarElem.dataset.cameraId = item.camera_id;
+                    similarElem.dataset.cameraDir = item.camera_dir;
+                    similarElem.style.left = `${position.x}px`;
+                    similarElem.style.top = `${position.y}px`;
+                    
+                    const img = document.createElement('img');
+                    img.src = item.crop_image_url;
+                    img.alt = `相似行人 (${item.similarity_percent})`;
+                    
+                    const similarityLabel = document.createElement('div');
+                    similarityLabel.className = 'similarity';
+                    similarityLabel.textContent = `相似度: ${item.similarity_percent}`;
+                    
+                    similarElem.appendChild(img);
+                    similarElem.appendChild(similarityLabel);
+                    mapContainer.appendChild(similarElem);
+                    
+                    existingElements.push({
+                        id: item.camera_id,
+                        rect: position.rect
+                    });
+                });
+                
+                // 显示清除按钮
+                clearSimilarBtn.style.display = 'block';
+            }
+            
+            // 新增：清除相似行人图像
+            function clearSimilarPersons() {
+                document.querySelectorAll('.similar-person').forEach(elem => {
+                    elem.remove();
+                });
+                similarPersons = [];
+                clearSimilarBtn.style.display = 'none';
+            }
+            
             // 处理预览图像点击事件
             function handleImageClick(e) {
                 const rect = detectionCanvas.getBoundingClientRect();
                 const clickX = e.clientX - rect.left;
                 const clickY = e.clientY - rect.top;
                 
-                // 检查点击位置是否在某个行人框内
                 let selected = null;
                 let selectedPerson = null;
                 detectionData.forEach(person => {
@@ -416,15 +609,14 @@
                     }
                 });
                 
-                // 更新选中状态并重新绘制
                 selectedPersonId = selected !== selectedPersonId ? selected : null;
                 
-                // 检查文件存在性并更新显示
                 if (selectedPersonId && selectedPerson) {
-                    // 获取当前摄像头目录
                     const activeCamera = document.querySelector('.camera-icon[data-active="true"]');
                     const cameraDir = activeCamera?.dataset.cameraDir;
-                    const frameName = '000001'; // 从图片名提取
+                    const frameName = '000001';
+                    
+                    selectedCameraDir = cameraDir;
                     
                     if (cameraDir) {
                         const filePath = getReidFilePath(selectedPerson, cameraDir, frameName);
@@ -433,16 +625,19 @@
                         
                         checkReidFileExists(filePath).then(exists => {
                             if (exists) {
-                                reidExistsElement.textContent = "状态：文件存在，正在查找相似特征...";
+                                reidExistsElement.textContent = "状态：文件存在，正在查找所有摄像头相似特征...";
                                 reidExistsElement.className = "reid-exists exists";
                                 
-                                // 调用后端API查找相似特征
-                                fetch('http://localhost:5000/api/find_similar', {
+                                // 调用后端API查找所有摄像头的相似特征
+                                fetch('http://localhost:5000/api/find_all_similar', {
                                     method: 'POST',
                                     headers: {
                                         'Content-Type': 'application/json'
                                     },
-                                    body: JSON.stringify({ detection_id: selectedPersonId })
+                                    body: JSON.stringify({ 
+                                        detection_id: selectedPersonId,
+                                        source_camera_dir: cameraDir
+                                    })
                                 })
                                 .then(response => {
                                     if (!response.ok) throw new Error('请求失败');
@@ -452,8 +647,9 @@
                                     if (result.error) {
                                         reidExistsElement.textContent = `状态：${result.error}`;
                                     } else {
-                                        reidExistsElement.textContent = 
-                                            `最相似: ${result.most_similar.file_name} (${result.most_similar.similarity_percent})`;
+                                        reidExistsElement.textContent = `已找到 ${result.similar_persons.length} 个相似行人`;
+                                        // 显示所有相似行人
+                                        showSimilarPersons(result.similar_persons);
                                     }
                                 })
                                 .catch(error => {
@@ -463,44 +659,40 @@
                             } else {
                                 reidExistsElement.textContent = "状态：文件不存在";
                                 reidExistsElement.className = "reid-exists not-exists";
+                                clearSimilarPersons();
                             }
                         });
                     }
                 } else {
                     reidFilenameElement.textContent = '未选中行人';
                     reidExistsElement.textContent = '';
+                    clearSimilarPersons();
                 }
                 
                 drawDetections();
             }
             
-            // 显示点击提示的函数
+            // 显示点击提示
             function showClickNotification() {
-                // 显示提示
                 clickNotification.classList.add('show');
-                
-                // 3秒后隐藏提示
                 setTimeout(() => {
                     clickNotification.classList.remove('show');
                 }, 3000);
             }
             
-            // 摄像头点击处理函数
+            // 摄像头点击处理
             function handleCameraClick(e) {
-                // 显示点击成功提示
                 showClickNotification();
                 
                 const camera = e.currentTarget;
                 const cameraId = camera.dataset.cameraId;
                 const cameraDir = camera.dataset.cameraDir;
                 
-                // 标记当前活动摄像头
                 document.querySelectorAll('.camera-icon').forEach(icon => {
                     icon.removeAttribute('data-active');
                 });
                 camera.dataset.active = "true";
                 
-                // 统一路径规则：datasets/yisuo/*/img1/000001.jpg
                 const imagePath = `datasets/yisuo/${cameraDir}/img1/000001.jpg`;
                 
                 previewImage.src = imagePath;
@@ -508,21 +700,18 @@
                 selectedPersonId = null;
                 reidFilenameElement.textContent = '未选中行人';
                 reidExistsElement.textContent = '';
+                clearSimilarPersons();
                 
-                // 加载对应摄像头的检测数据
                 loadDetectionData(cameraDir).then(() => {
-                    // 处理图片加载完成事件
                     const handleImageLoad = function() {
                         imageWidth = this.naturalWidth;
                         imageHeight = this.naturalHeight;
                         drawDetections();
-                        // 移除事件监听避免重复触发
                         previewImage.removeEventListener('load', handleImageLoad);
                     };
                     
                     previewImage.addEventListener('load', handleImageLoad);
                     
-                    // 如果图片已经缓存，手动触发加载事件
                     if (previewImage.complete) {
                         handleImageLoad.call(previewImage);
                     }
@@ -534,12 +723,13 @@
                 previewContainer.style.display = 'none';
                 detectionData = [];
                 selectedPersonId = null;
+                selectedCameraDir = null;
                 reidFilenameElement.textContent = '未选中行人';
                 reidExistsElement.textContent = '';
-                // 清除活动摄像头标记
                 document.querySelectorAll('.camera-icon').forEach(icon => {
                     icon.removeAttribute('data-active');
                 });
+                positionSimilarPersons(); // 关闭后重新定位子图
             }
             
             // 事件绑定
@@ -550,20 +740,14 @@
                 }
             });
             detectionCanvas.addEventListener('click', handleImageClick);
-            window.addEventListener('resize', function() {
-                resizeMap();
-                // 如果预览窗口打开，重新绘制检测框
-                if (previewContainer.style.display === 'flex' && detectionData.length > 0) {
-                    drawDetections();
-                }
-            });
+            window.addEventListener('resize', resizeMap);
             map.addEventListener('load', resizeMap);
+            clearSimilarBtn.addEventListener('click', clearSimilarPersons);
             
             // 初始化
             resizeMap();
-            initCameras(); // 初始化摄像头
+            initCameras();
             
-            // 为所有摄像头图标绑定点击事件
             document.querySelectorAll('.camera-icon').forEach(icon => {
                 icon.addEventListener('click', handleCameraClick);
             });
