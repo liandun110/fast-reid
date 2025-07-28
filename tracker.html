@@ -110,20 +110,34 @@
         .reid-exists.not-exists {
             color: #f44336; /* 不存在 - 红色 */
         }
+        
+        /* 新增提示信息样式 */
+        #click-notification {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 128, 0, 0.9);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-family: Arial, sans-serif;
+            font-size: 16px;
+            z-index: 200;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+        
+        #click-notification.show {
+            opacity: 1;
+        }
     </style>
 </head>
 <body>
     <div id="map-container">
         <img id="map" src="datasets/yisuo/map.png" alt="地图">
-        <i class="fa fa-video-camera camera-icon" 
-            id="cameraIcon" 
-            style="left: 1100px; top: 1600px;"></i>
-        <i class="fa fa-video-camera camera-icon" 
-            id="cameraIcon2" 
-            data-camera-id="02"
-            data-image-path="datasets/yisuo/人脸追踪02/人脸追踪02_First_Frame.png"
-            data-det-path="datasets/yisuo/人脸追踪02/det/det_yolov8x.txt"
-            data-reid-path="datasets/yisuo/人脸追踪02/reid_features/"></i>
+        <!-- 摄像头图标将通过JS动态生成 -->
     </div>
     
     <div id="preview-container">
@@ -138,12 +152,15 @@
             <div class="reid-exists" id="reid-exists"></div>
         </div>
     </div>
+    
+    <!-- 新增提示信息元素 -->
+    <div id="click-notification">点击成功</div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
+            // DOM元素引用
             const map = document.getElementById('map');
             const mapContainer = document.getElementById('map-container');
-            const cameraIcon = document.getElementById('cameraIcon');
             const previewContainer = document.getElementById('preview-container');
             const previewImage = document.getElementById('preview-image');
             const previewWrapper = document.getElementById('preview-wrapper');
@@ -151,40 +168,69 @@
             const ctx = detectionCanvas.getContext('2d');
             const closePreview = document.getElementById('close-preview');
             const personCountElement = document.getElementById('person-count');
-            const reidFilenameElement = document.getElementById('reid-filename'); // 新增元素引用
-            const reidExistsElement = document.getElementById('reid-exists'); // reid特征是否存在
+            const reidFilenameElement = document.getElementById('reid-filename');
+            const reidExistsElement = document.getElementById('reid-exists');
+            // 新增提示信息元素引用
+            const clickNotification = document.getElementById('click-notification');
             
-            // 存储检测数据
+            // 存储检测数据和状态
             let detectionData = [];
             let selectedPersonId = null;
             let imageWidth = 0;
             let imageHeight = 0;
             let scaleFactor = 1;
-            // 从预览图路径提取帧名称
-            const frameName = '人脸追踪1_First_Frame'; // 从图片路径提取的帧名称
+            
+            // 摄像头配置 - 集中管理所有摄像头信息
+            const cameras = [
+                { id: '01', dir: '人脸追踪01' },
+                { id: '02', dir: '人脸追踪02' },
+                { id: '03', dir: '人脸追踪03' },
+                { id: '04', dir: '人脸追踪04' },
+                { id: '05', dir: '人脸追踪05' },
+                { id: '06', dir: '人脸追踪06' },
+                { id: '07', dir: '人脸追踪07' },
+                { id: '08', dir: '人脸追踪08' },
+                { id: '09', dir: '人脸追踪09' },
+                { id: '10', dir: '人脸追踪10' },
+                // 新增摄像头只需在这里添加配置
+            ];
 
-            // 新增：加载摄像头位置数据
-            function loadCameraPositions() {
-                return fetch('datasets/yisuo/人脸追踪02/geo.json')
+            // 初始化 - 创建所有摄像头图标并加载位置
+            function initCameras() {
+                cameras.forEach(camera => {
+                    // 创建摄像头图标
+                    const icon = document.createElement('i');
+                    icon.className = 'fa fa-video-camera camera-icon';
+                    icon.dataset.cameraId = camera.id;
+                    icon.dataset.cameraDir = camera.dir; // 存储目录信息
+                    mapContainer.appendChild(icon);
+                    
+                    // 加载该摄像头的位置信息
+                    loadCameraPosition(icon, camera.dir);
+                });
+            }
+            
+            // 加载指定摄像头的位置信息
+            function loadCameraPosition(icon, cameraDir) {
+                const geoPath = `datasets/yisuo/${cameraDir}/geo.json`;
+                
+                fetch(geoPath)
                     .then(response => {
                         if (!response.ok) {
-                            throw new Error('无法加载摄像头位置文件');
+                            throw new Error(`无法加载摄像头${cameraDir}的位置文件`);
                         }
                         return response.json();
                     })
                     .then(data => {
-                        // 设置第二个摄像头位置
-                        const camera2 = document.getElementById('cameraIcon2');
-                        if (camera2 && data.camera_pos && data.camera_pos.length === 2) {
-                            // 存储数组中的x和y（[x, y]）
-                            camera2.dataset.x = data.camera_pos[0]; // 第一个元素为x
-                            camera2.dataset.y = data.camera_pos[1]; // 第二个元素为y
-                            adjustIconPosition(); // 重新调整位置
+                        if (data.camera_pos && data.camera_pos.length === 2) {
+                            // 存储位置数据
+                            icon.dataset.x = data.camera_pos[0];
+                            icon.dataset.y = data.camera_pos[1];
+                            adjustIconPosition(); // 调整位置
                         }
                     })
                     .catch(error => {
                         console.error('加载摄像头位置出错:', error);
-                        return null;
                     });
             }
             
@@ -208,26 +254,21 @@
                 adjustIconPosition();
             }
             
-            // 根据地图实际显示尺寸调整图标位置
+            // 根据地图实际显示尺寸调整所有图标位置
             function adjustIconPosition() {
                 const mapRect = map.getBoundingClientRect();
                 const scaleX = mapRect.width / 1152;
                 const scaleY = mapRect.height / 1656;
                 
-                const iconX = 1100 * scaleX;
-                const iconY = 1600 * scaleY;
-                
-                cameraIcon.style.left = `${iconX}px`;
-                cameraIcon.style.top = `${iconY}px`;
-
-                // 第二个摄像头位置
-                const camera2 = document.getElementById('cameraIcon2');
-                if (camera2 && camera2.dataset.x && camera2.dataset.y) {
-                    const iconX2 = parseFloat(camera2.dataset.x) * scaleX;
-                    const iconY2 = parseFloat(camera2.dataset.y) * scaleY;
-                    camera2.style.left = `${iconX2}px`;
-                    camera2.style.top = `${iconY2}px`;
-                }
+                // 调整所有摄像头图标位置
+                document.querySelectorAll('.camera-icon').forEach(icon => {
+                    if (icon.dataset.x && icon.dataset.y) {
+                        const iconX = parseFloat(icon.dataset.x) * scaleX;
+                        const iconY = parseFloat(icon.dataset.y) * scaleY;
+                        icon.style.left = `${iconX}px`;
+                        icon.style.top = `${iconY}px`;
+                    }
+                });
             }
             
             // 解析YOLO检测结果
@@ -251,7 +292,7 @@
                     const confidence = parseFloat(parts[6]);
                     const detectionId = parseInt(parts[9]);
                     
-                    // 我们只关心第一帧的检测结果
+                    // 只关心第一帧的检测结果
                     if (frameId === 1) {
                         results.push({
                             frameId,
@@ -269,42 +310,29 @@
             }
             
             // 生成ReID特征文件名
-            function getReidFilename(person) {
-                // 按照规则生成文件名: f"{detection_id:06d}_c1s1_{frame_name}_{conf:.4f}.npy"
+            function getReidFilename(person, frameName) {
                 return `${person.detectionId.toString().padStart(6, '0')}_c1s1_${frameName}_${person.confidence.toFixed(4)}.npy`;
             }
 
-            function getReidFilePath(person) {
-                // 获取当前选中摄像头的ReID路径
-                const activeCamera = selectedPersonId ? 
-                    (detectionData.find(p => p.detectionId === selectedPersonId) ? 
-                        document.querySelector(`.camera-icon[data-camera-id="${person.frameId === 1 ? '01' : '02'}"]`) : 
-                        null) : 
-                    null;
-                
-                const reidBasePath = activeCamera ? 
-                    activeCamera.dataset.currentReidPath : 
-                    'datasets/yisuo/人脸追踪01/reid_features/';
-                
-                const frameName = person.frameId.toString().padStart(6, '0');
-                const filename = `${person.detectionId.toString().padStart(6, '0')}_c1s1_${frameName}_${person.confidence.toFixed(4)}.npy`;
+            // 获取ReID文件路径
+            function getReidFilePath(person, cameraDir, frameName) {
+                const reidBasePath = `datasets/yisuo/${cameraDir}/reid_features/`;
+                const filename = getReidFilename(person, frameName);
                 return `${reidBasePath}${filename}`;
             }
 
             // 检查ReID文件是否存在
             function checkReidFileExists(filePath) {
                 return fetch(filePath, { method: 'HEAD' })
-                    .then(response => {
-                        return response.ok; // 存在返回true，否则false
-                    })
-                    .catch(() => {
-                        return false; // 请求失败视为不存在
-                    });
+                    .then(response => response.ok)
+                    .catch(() => false);
             }
             
-            // 修改：接受检测文件路径参数
-            function loadDetectionData(detFilePath) {
-                return fetch(detFilePath)
+            // 加载检测数据
+            function loadDetectionData(cameraDir) {
+                const detPath = `datasets/yisuo/${cameraDir}/det/det_yolov8x.txt`;
+                
+                return fetch(detPath)
                     .then(response => {
                         if (!response.ok) {
                             throw new Error('无法加载检测数据文件');
@@ -391,47 +419,53 @@
                 // 更新选中状态并重新绘制
                 selectedPersonId = selected !== selectedPersonId ? selected : null;
                 
-                // 新增：检查文件存在性并更新显示
-                // 在handleImageClick函数中，当选中行人后添加：
+                // 检查文件存在性并更新显示
                 if (selectedPersonId && selectedPerson) {
-                    const filePath = getReidFilePath(selectedPerson);
-                    const filename = filePath.split('/').pop();
-                    reidFilenameElement.textContent = `ReID文件: ${filename}`;
+                    // 获取当前摄像头目录
+                    const activeCamera = document.querySelector('.camera-icon[data-active="true"]');
+                    const cameraDir = activeCamera?.dataset.cameraDir;
+                    const frameName = '000001'; // 从图片名提取
                     
-                    checkReidFileExists(filePath).then(exists => {
-                        if (exists) {
-                            reidExistsElement.textContent = "状态：文件存在，正在查找相似特征...";
-                            reidExistsElement.className = "reid-exists exists";
-                            
-                            // 调用后端API查找相似特征
-                            fetch('http://localhost:5000/api/find_similar', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({ detection_id: selectedPersonId })
-                            })
-                            .then(response => {
-                                if (!response.ok) throw new Error('请求失败');
-                                return response.json();
-                            })
-                            .then(result => {
-                                if (result.error) {
-                                    reidExistsElement.textContent = `状态：${result.error}`;
-                                } else {
-                                    reidExistsElement.textContent = 
-                                        `最相似: ${result.most_similar.file_name} (${result.most_similar.similarity_percent})`;
-                                }
-                            })
-                            .catch(error => {
-                                console.error('API调用错误:', error);
-                                reidExistsElement.textContent = "状态：查找相似特征失败";
-                            });
-                        } else {
-                            reidExistsElement.textContent = "状态：文件不存在";
-                            reidExistsElement.className = "reid-exists not-exists";
-                        }
-                    });
+                    if (cameraDir) {
+                        const filePath = getReidFilePath(selectedPerson, cameraDir, frameName);
+                        const filename = filePath.split('/').pop();
+                        reidFilenameElement.textContent = `ReID文件: ${filename}`;
+                        
+                        checkReidFileExists(filePath).then(exists => {
+                            if (exists) {
+                                reidExistsElement.textContent = "状态：文件存在，正在查找相似特征...";
+                                reidExistsElement.className = "reid-exists exists";
+                                
+                                // 调用后端API查找相似特征
+                                fetch('http://localhost:5000/api/find_similar', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json'
+                                    },
+                                    body: JSON.stringify({ detection_id: selectedPersonId })
+                                })
+                                .then(response => {
+                                    if (!response.ok) throw new Error('请求失败');
+                                    return response.json();
+                                })
+                                .then(result => {
+                                    if (result.error) {
+                                        reidExistsElement.textContent = `状态：${result.error}`;
+                                    } else {
+                                        reidExistsElement.textContent = 
+                                            `最相似: ${result.most_similar.file_name} (${result.most_similar.similarity_percent})`;
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error('API调用错误:', error);
+                                    reidExistsElement.textContent = "状态：查找相似特征失败";
+                                });
+                            } else {
+                                reidExistsElement.textContent = "状态：文件不存在";
+                                reidExistsElement.className = "reid-exists not-exists";
+                            }
+                        });
+                    }
                 } else {
                     reidFilenameElement.textContent = '未选中行人';
                     reidExistsElement.textContent = '';
@@ -440,63 +474,82 @@
                 drawDetections();
             }
             
-            // 通用摄像头点击处理函数
-            function handleCameraClick(e) {
-                const cameraId = e.currentTarget.dataset.cameraId || "01";
-                const imagePath = e.currentTarget.dataset.imagePath || 'datasets/yisuo/人脸追踪01/人脸追踪1_First_Frame.png';
-                const detPath = e.currentTarget.dataset.detPath || 'datasets/yisuo/人脸追踪01/det/det_yolov8x.txt';
-                const reidPath = e.currentTarget.dataset.reidPath || 'datasets/yisuo/人脸追踪01/reid_features/';
+            // 显示点击提示的函数
+            function showClickNotification() {
+                // 显示提示
+                clickNotification.classList.add('show');
                 
-                // 存储当前摄像头的路径信息
-                e.currentTarget.dataset.currentReidPath = reidPath;
+                // 3秒后隐藏提示
+                setTimeout(() => {
+                    clickNotification.classList.remove('show');
+                }, 3000);
+            }
+            
+            // 摄像头点击处理函数
+            function handleCameraClick(e) {
+                // 显示点击成功提示
+                showClickNotification();
+                
+                const camera = e.currentTarget;
+                const cameraId = camera.dataset.cameraId;
+                const cameraDir = camera.dataset.cameraDir;
+                
+                // 标记当前活动摄像头
+                document.querySelectorAll('.camera-icon').forEach(icon => {
+                    icon.removeAttribute('data-active');
+                });
+                camera.dataset.active = "true";
+                
+                // 统一路径规则：datasets/yisuo/*/img1/000001.jpg
+                const imagePath = `datasets/yisuo/${cameraDir}/img1/000001.jpg`;
                 
                 previewImage.src = imagePath;
                 previewContainer.style.display = 'flex';
                 selectedPersonId = null;
                 reidFilenameElement.textContent = '未选中行人';
+                reidExistsElement.textContent = '';
                 
                 // 加载对应摄像头的检测数据
-                loadDetectionData(detPath).then(() => {
-                    previewImage.onload = function() {
+                loadDetectionData(cameraDir).then(() => {
+                    // 处理图片加载完成事件
+                    const handleImageLoad = function() {
                         imageWidth = this.naturalWidth;
                         imageHeight = this.naturalHeight;
                         drawDetections();
+                        // 移除事件监听避免重复触发
+                        previewImage.removeEventListener('load', handleImageLoad);
                     };
                     
+                    previewImage.addEventListener('load', handleImageLoad);
+                    
+                    // 如果图片已经缓存，手动触发加载事件
                     if (previewImage.complete) {
-                        previewImage.onload();
+                        handleImageLoad.call(previewImage);
                     }
                 });
             }
-
-            // 绑定摄像头点击事件
-            cameraIcon.addEventListener('click', handleCameraClick);
-            document.getElementById('cameraIcon2').addEventListener('click', handleCameraClick);
             
             // 关闭预览
-            closePreview.addEventListener('click', function() {
+            function closePreviewHandler() {
                 previewContainer.style.display = 'none';
                 detectionData = [];
                 selectedPersonId = null;
-                reidFilenameElement.textContent = '未选中行人'; // 新增
-                reidExistsElement.textContent = ''; // 新增
-            });
+                reidFilenameElement.textContent = '未选中行人';
+                reidExistsElement.textContent = '';
+                // 清除活动摄像头标记
+                document.querySelectorAll('.camera-icon').forEach(icon => {
+                    icon.removeAttribute('data-active');
+                });
+            }
             
-            // 点击预览容器其他区域也关闭
+            // 事件绑定
+            closePreview.addEventListener('click', closePreviewHandler);
             previewContainer.addEventListener('click', function(e) {
                 if (e.target === previewContainer) {
-                    previewContainer.style.display = 'none';
-                    detectionData = [];
-                    selectedPersonId = null;
-                    reidFilenameElement.textContent = '未选中行人'; // 新增
-                    reidExistsElement.textContent = ''; // 新增
+                    closePreviewHandler();
                 }
             });
-            
-            // 点击检测画布（即图像区域）
             detectionCanvas.addEventListener('click', handleImageClick);
-            
-            // 窗口大小改变时重新调整
             window.addEventListener('resize', function() {
                 resizeMap();
                 // 如果预览窗口打开，重新绘制检测框
@@ -504,15 +557,16 @@
                     drawDetections();
                 }
             });
-            
-            // 初始调整大小
-            resizeMap();
-            
-            // 新增：加载摄像头位置
-            loadCameraPositions();
-
-            // 确保地图加载后调整图标位置
             map.addEventListener('load', resizeMap);
+            
+            // 初始化
+            resizeMap();
+            initCameras(); // 初始化摄像头
+            
+            // 为所有摄像头图标绑定点击事件
+            document.querySelectorAll('.camera-icon').forEach(icon => {
+                icon.addEventListener('click', handleCameraClick);
+            });
         });
     </script>
 </body>
