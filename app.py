@@ -4,12 +4,24 @@ import os
 import numpy as np
 from glob import glob
 import re
+import json
 
 app = Flask(__name__)
 CORS(app)  # 允许跨域请求
 
 # 基础数据集路径
 BASE_DATASET_DIR = "datasets/yisuo"
+
+def get_video_start_time(video_dir):
+    """从视频目录的time.json中读取video_start_time"""
+    time_json_path = os.path.join(video_dir, "time.json")
+    try:
+        with open(time_json_path, 'r', encoding='utf-8') as f:
+            time_data = json.load(f)
+            return time_data.get("video_start_time", "未知时间")  # 默认为"未知时间"
+    except Exception as e:
+        app.logger.error(f"读取time.json失败 {time_json_path}: {str(e)}")
+        return "未知时间"
 
 def load_npy_feature(file_path):
     """加载npy格式的特征文件"""
@@ -149,6 +161,11 @@ def find_all_similar():
                 camera_id_match = re.match(r'^人脸追踪(\d+)$', camera_dir)
                 camera_id = camera_id_match.group(1) if camera_id_match else camera_dir
 
+                # 新增：获取视频目录和开始时间
+                # 视频目录 = 特征文件目录的父目录（例如：datasets/yisuo/人脸追踪02）
+                video_dir = f"datasets/yisuo/{camera_dir}"
+                video_start_time = get_video_start_time(video_dir)  # 调用工具函数
+
                 similar_person_dict = {
                     "camera_id": camera_id,
                     "camera_dir": camera_dir,
@@ -156,7 +173,8 @@ def find_all_similar():
                     "frame_id": frame_id,
                     "crop_image_url": crop_image_url,
                     "similarity": round(max_similarity, 6),
-                    "similarity_percent": f"{max_similarity * 100:.2f}%"
+                    "similarity_percent": f"{max_similarity * 100:.2f}%",
+                    "video_start_time": video_start_time  # 新增：视频开始时间
                 }
                 print(similar_person_dict)
                 

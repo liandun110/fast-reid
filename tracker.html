@@ -41,8 +41,8 @@
         /* 新增：相似行人裁剪图样式 */
         .similar-person {
             position: absolute;
-            width: 100px;
-            height: 150px;
+            width: 30px;
+            height: 80px;
             border: 2px solid #4CAF50;
             border-radius: 4px;
             background-color: white;
@@ -564,7 +564,7 @@
                     
                     const similarityLabel = document.createElement('div');
                     similarityLabel.className = 'similarity';
-                    similarityLabel.textContent = `相似度: ${item.similarity_percent}`;
+                    similarityLabel.textContent = `时间: ${item.video_start_time}`;
                     
                     similarElem.appendChild(img);
                     similarElem.appendChild(similarityLabel);
