@@ -178,11 +178,46 @@
             z-index: 30;
             display: none;
         }
+        
+        /* 新增：轨迹线样式 */
+        #track-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 15;
+        }
+        
+        /* 新增：时间点标记样式 */
+        .time-marker {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            background-color: #2196F3;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 16;
+        }
+        
+        .time-label {
+            position: absolute;
+            background-color: rgba(33, 150, 243, 0.9);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            white-space: nowrap;
+            z-index: 17;
+        }
     </style>
 </head>
 <body>
     <div id="map-container">
         <img id="map" src="datasets/yisuo/map.png" alt="地图">
+        <!-- 新增：轨迹画布 -->
+        <canvas id="track-canvas"></canvas>
         <!-- 摄像头图标将通过JS动态生成 -->
     </div>
     
@@ -219,6 +254,9 @@
             const reidExistsElement = document.getElementById('reid-exists');
             const clickNotification = document.getElementById('click-notification');
             const clearSimilarBtn = document.getElementById('clear-similar');
+            // 新增：轨迹画布
+            const trackCanvas = document.getElementById('track-canvas');
+            const trackCtx = trackCanvas.getContext('2d');
             
             // 存储检测数据和状态
             let detectionData = [];
@@ -288,9 +326,16 @@
                     map.style.height = 'auto';
                 }
                 
+                // 调整轨迹画布大小
+                const mapRect = map.getBoundingClientRect();
+                trackCanvas.width = mapRect.width;
+                trackCanvas.height = mapRect.height;
+                
                 adjustIconPosition();
                 // 重新定位相似行人图像
                 positionSimilarPersons();
+                // 重新绘制轨迹
+                drawTracks();
             }
             
             // 调整图标位置
@@ -421,7 +466,7 @@
                 });
             }
             
-            // 新增：检查两个矩形是否重叠
+            // 检查两个矩形是否重叠
             function isOverlapping(rect1, rect2) {
                 return !(
                     rect1.right < rect2.left ||
@@ -431,7 +476,7 @@
                 );
             }
             
-            // 新增：计算相似行人图像位置，避免重叠
+            // 计算相似行人图像位置，避免重叠
             function calculatePosition(cameraIcon, existingElements) {
                 const mapRect = map.getBoundingClientRect();
                 const scaleX = mapRect.width / 1152;
@@ -504,7 +549,7 @@
                 };
             }
             
-            // 新增：定位所有相似行人图像
+            // 定位所有相似行人图像
             function positionSimilarPersons() {
                 const existingElements = [];
                 document.querySelectorAll('.similar-person').forEach(elem => {
@@ -534,10 +579,119 @@
                 });
             }
             
-            // 新增：显示相似行人
+            // 新增：按时间排序相似行人
+            function sortPersonsByTime(persons) {
+                return [...persons].sort((a, b) => {
+                    return new Date(a.video_start_time) - new Date(b.video_start_time);
+                });
+            }
+            
+            // 新增：绘制轨迹
+            function drawTracks() {
+                // 清除现有轨迹
+                trackCtx.clearRect(0, 0, trackCanvas.width, trackCanvas.height);
+                
+                if (similarPersons.length <= 1) return;
+                
+                // 按时间排序
+                const sortedPersons = sortPersonsByTime(similarPersons);
+                
+                const mapRect = map.getBoundingClientRect();
+                const scaleX = mapRect.width / 1152;
+                const scaleY = mapRect.height / 1656;
+                
+                // 收集所有点的坐标
+                const points = [];
+                sortedPersons.forEach(person => {
+                    const cameraIcon = document.querySelector(`.camera-icon[data-camera-dir="${person.camera_dir}"]`);
+                    if (cameraIcon && cameraIcon.dataset.x && cameraIcon.dataset.y) {
+                        const x = parseFloat(cameraIcon.dataset.x) * scaleX;
+                        const y = parseFloat(cameraIcon.dataset.y) * scaleY;
+                        points.push({ x, y, time: person.video_start_time });
+                    }
+                });
+                
+                // 绘制轨迹线
+                if (points.length >= 2) {
+                    trackCtx.beginPath();
+                    trackCtx.moveTo(points[0].x, points[0].y);
+                    
+                    for (let i = 1; i < points.length; i++) {
+                        trackCtx.lineTo(points[i].x, points[i].y);
+                    }
+                    
+                    trackCtx.strokeStyle = 'rgba(33, 150, 243, 0.8)';
+                    trackCtx.lineWidth = 3;
+                    trackCtx.setLineDash([5, 5]);
+                    trackCtx.stroke();
+                    trackCtx.setLineDash([]);
+                }
+                
+                // 绘制时间点标记
+                points.forEach((point, index) => {
+                    // 创建或更新时间标记
+                    let marker = document.querySelector(`.time-marker[data-index="${index}"]`);
+                    let label = document.querySelector(`.time-label[data-index="${index}"]`);
+                    
+                    if (!marker) {
+                        marker = document.createElement('div');
+                        marker.className = 'time-marker';
+                        marker.dataset.index = index;
+                        mapContainer.appendChild(marker);
+                    }
+                    
+                    if (!label) {
+                        label = document.createElement('div');
+                        label.className = 'time-label';
+                        label.dataset.index = index;
+                        mapContainer.appendChild(label);
+                    }
+                    
+                    // 设置位置和内容
+                    marker.style.left = `${point.x}px`;
+                    marker.style.top = `${point.y}px`;
+                    
+                    // 格式化时间显示
+                    console.log(point.time)
+                    
+                    // 处理"20241121163305"格式的时间字符串
+                    const timeStr = point.time; // "20241121163305"
+
+                    // 拆分年月日时分秒（字符串截取）
+                    const year = timeStr.substring(0, 4);      // 2024
+                    const month = timeStr.substring(4, 6);     // 11
+                    const day = timeStr.substring(6, 8);       // 21
+                    const hour = timeStr.substring(8, 10);     // 16
+                    const minute = timeStr.substring(10, 12);  // 33
+                    const second = timeStr.substring(12, 14);  // 05
+
+                    // 拼接为Date可识别的格式（ISO 8601）
+                    const isoTime = `${year}-${month}-${day}T${hour}:${minute}:${second}`;
+
+                    // 创建正确的Date对象
+                    const time = new Date(isoTime);
+                    
+                    const formattedTime = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}:${time.getSeconds().toString().padStart(2, '0')}`;
+                    label.textContent = formattedTime;
+                    console.log(formattedTime);
+                    
+                    // 定位标签，避免重叠
+                    const labelOffset = 15;
+                    if (index % 2 === 0) {
+                        label.style.left = `${point.x + labelOffset}px`;
+                        label.style.top = `${point.y - 10}px`;
+                    } else {
+                        label.style.left = `${point.x - labelOffset}px`;
+                        label.style.top = `${point.y + 10}px`;
+                        label.style.textAlign = 'right';
+                    }
+                });
+            }
+            
+            // 显示相似行人
             function showSimilarPersons(similarData) {
                 console.log(`成功调用showSimilarPersons，共加载 ${similarData.length} 个相似行人`);
-                // 先清除现有相似行人图像
+                // 先清除现有相似行人图像和轨迹
                 clearSimilarPersons();
                 
                 similarPersons = similarData;
@@ -555,6 +709,7 @@
                     similarElem.className = 'similar-person';
                     similarElem.dataset.cameraId = item.camera_id;
                     similarElem.dataset.cameraDir = item.camera_dir;
+                    similarElem.dataset.time = item.video_start_time; // 存储时间信息
                     similarElem.style.left = `${position.x}px`;
                     similarElem.style.top = `${position.y}px`;
                     
@@ -576,15 +731,25 @@
                     });
                 });
                 
+                // 绘制轨迹
+                drawTracks();
+                
                 // 显示清除按钮
                 clearSimilarBtn.style.display = 'block';
             }
             
-            // 新增：清除相似行人图像
+            // 清除相似行人图像和轨迹
             function clearSimilarPersons() {
                 document.querySelectorAll('.similar-person').forEach(elem => {
                     elem.remove();
                 });
+                // 清除时间标记
+                document.querySelectorAll('.time-marker, .time-label').forEach(elem => {
+                    elem.remove();
+                });
+                // 清除轨迹
+                trackCtx.clearRect(0, 0, trackCanvas.width, trackCanvas.height);
+                
                 similarPersons = [];
                 clearSimilarBtn.style.display = 'none';
             }
