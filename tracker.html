@@ -3,42 +3,104 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>地图查看器</title>
+    <title>智能地图轨迹查看器</title>
     <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+    <!-- 引入Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入D3.js用于更流畅的动画 -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3B82F6',
+                        secondary: '#10B981',
+                        accent: '#8B5CF6',
+                        danger: '#EF4444',
+                        dark: '#1E293B',
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <style type="text/tailwindcss">
+        @layer utilities {
+            .content-auto {
+                content-visibility: auto;
+            }
+            .camera-pulse {
+                animation: pulse 2s infinite;
+            }
+            .animation-control {
+                @apply bg-white/90 backdrop-blur-sm rounded-lg shadow-md p-3 flex gap-2 items-center;
+            }
+            .control-btn {
+                @apply px-3 py-1.5 rounded-md text-sm transition-all duration-200 flex items-center gap-1.5;
+            }
+            .time-label {
+                @apply whitespace-nowrap text-xs font-medium;
+            }
+            .person-icon {
+                @apply transition-all duration-300 z-20;
+            }
+        }
+        
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.4);
+            }
+            70% {
+                box-shadow: 0 0 0 10px rgba(255, 0, 0, 0);
+            }
+            100% {
+                box-shadow: 0 0 0 0 rgba(255, 0, 0, 0);
+            }
+        }
+    </style>
+    
     <style>
         body {
             margin: 0;
             padding: 0;
             overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
             height: 100vh;
             background-color: #f0f0f0;
+            font-family: system-ui, -apple-system, sans-serif;
         }
         
         #map-container {
             position: relative;
-            max-width: 100%;
-            max-height: 100%;
+            width: 100%;
+            height: 100%;
         }
         
         #map {
-            max-width: 100%;
-            max-height: 100vh;
-            display: block;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
         }
         
         .camera-icon {
             position: absolute;
-            font-size: 24px;  /* 图标大小 */
-            color: #ff0000;   /* 红色图标 */
+            font-size: 24px;
+            color: #ff0000;
             cursor: pointer;
             z-index: 10;
-            transform: translate(-50%, -50%); /* 居中定位 */
+            transform: translate(-50%, -50%);
+            transition: all 0.3s ease;
         }
         
-        /* 新增：相似行人裁剪图样式 */
+        .camera-icon:hover {
+            transform: translate(-50%, -50%) scale(1.1);
+        }
+        
+        .camera-icon.active {
+            color: #10B981;
+        }
+        
         .similar-person {
             position: absolute;
             width: 30px;
@@ -50,6 +112,11 @@
             z-index: 20;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             transition: all 0.3s ease;
+        }
+        
+        .similar-person:hover {
+            transform: scale(1.1);
+            z-index: 25;
         }
         
         .similar-person img {
@@ -137,10 +204,10 @@
             font-size: 13px;
         }
         .reid-exists.exists {
-            color: #4CAF50; /* 存在 - 绿色 */
+            color: #4CAF50;
         }
         .reid-exists.not-exists {
-            color: #f44336; /* 不存在 - 红色 */
+            color: #f44336;
         }
         
         #click-notification {
@@ -164,12 +231,11 @@
             opacity: 1;
         }
         
-        /* 新增：清除相似结果按钮 */
         #clear-similar {
             position: fixed;
             top: 20px;
             left: 20px;
-            background-color: rgba(255, 0, 0, 0.8);
+            background-color: rgba(239, 68, 68, 0.9);
             color: white;
             border: none;
             padding: 8px 15px;
@@ -177,9 +243,13 @@
             cursor: pointer;
             z-index: 30;
             display: none;
+            transition: all 0.2s ease;
         }
         
-        /* 新增：轨迹线样式 */
+        #clear-similar:hover {
+            background-color: rgba(239, 68, 68, 1);
+        }
+        
         #track-canvas {
             position: absolute;
             top: 0;
@@ -190,7 +260,6 @@
             z-index: 15;
         }
         
-        /* 新增：时间点标记样式 */
         .time-marker {
             position: absolute;
             width: 12px;
@@ -199,6 +268,11 @@
             border-radius: 50%;
             transform: translate(-50%, -50%);
             z-index: 16;
+            transition: all 0.3s ease;
+        }
+        
+        .time-marker:hover {
+            transform: translate(-50%, -50%) scale(1.3);
         }
         
         .time-label {
@@ -210,15 +284,55 @@
             font-size: 11px;
             white-space: nowrap;
             z-index: 17;
+            opacity: 0;
+            transition: all 0.3s ease;
+        }
+        
+        .time-marker:hover + .time-label {
+            opacity: 1;
+        }
+        
+        /* 轨迹动画控制栏 */
+        #animation-controls {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 40;
+        }
+        
+        /* 时间轴样式 */
+        #timeline-container {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            max-width: 800px;
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 8px;
+            padding: 10px 15px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            z-index: 40;
+            display: none;
+        }
+        
+        #timeline {
+            width: 100%;
+            margin: 10px 0;
+        }
+        
+        .timeline-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #666;
         }
     </style>
 </head>
 <body>
     <div id="map-container">
         <img id="map" src="datasets/yisuo/map.png" alt="地图">
-        <!-- 新增：轨迹画布 -->
         <canvas id="track-canvas"></canvas>
-        <!-- 摄像头图标将通过JS动态生成 -->
     </div>
     
     <div id="preview-container">
@@ -235,8 +349,37 @@
     </div>
     
     <div id="click-notification">点击成功</div>
-    <!-- 新增：清除相似结果按钮 -->
     <button id="clear-similar">清除相似结果</button>
+    
+    <!-- 新增：轨迹动画控制栏 -->
+    <div id="animation-controls" class="animation-control">
+        <button id="play-animation" class="control-btn bg-primary text-white hover:bg-primary/90">
+            <i class="fa fa-play"></i>
+            <span>播放轨迹</span>
+        </button>
+        <button id="pause-animation" class="control-btn bg-gray-200 text-gray-800 hover:bg-gray-300 hidden">
+            <i class="fa fa-pause"></i>
+            <span>暂停</span>
+        </button>
+        <button id="reset-animation" class="control-btn bg-gray-200 text-gray-800 hover:bg-gray-300">
+            <i class="fa fa-refresh"></i>
+            <span>重置</span>
+        </button>
+        <div class="text-sm text-gray-600 ml-2">
+            <span id="animation-status">准备就绪</span>
+        </div>
+    </div>
+    
+    <!-- 新增：时间轴控制 -->
+    <div id="timeline-container">
+        <div class="font-medium text-sm mb-1">轨迹时间轴</div>
+        <input type="range" id="timeline" min="0" max="100" value="0">
+        <div class="timeline-labels">
+            <span id="start-time">00:00:00</span>
+            <span id="current-time">00:00:00</span>
+            <span id="end-time">00:00:00</span>
+        </div>
+    </div>
 
     <script>
         document.addEventListener('DOMContentLoaded', function() {
@@ -254,9 +397,19 @@
             const reidExistsElement = document.getElementById('reid-exists');
             const clickNotification = document.getElementById('click-notification');
             const clearSimilarBtn = document.getElementById('clear-similar');
-            // 新增：轨迹画布
             const trackCanvas = document.getElementById('track-canvas');
             const trackCtx = trackCanvas.getContext('2d');
+            
+            // 新增：动画控制元素
+            const playAnimationBtn = document.getElementById('play-animation');
+            const pauseAnimationBtn = document.getElementById('pause-animation');
+            const resetAnimationBtn = document.getElementById('reset-animation');
+            const animationStatus = document.getElementById('animation-status');
+            const timelineContainer = document.getElementById('timeline-container');
+            const timeline = document.getElementById('timeline');
+            const startTimeLabel = document.getElementById('start-time');
+            const currentTimeLabel = document.getElementById('current-time');
+            const endTimeLabel = document.getElementById('end-time');
             
             // 存储检测数据和状态
             let detectionData = [];
@@ -265,7 +418,18 @@
             let imageWidth = 0;
             let imageHeight = 0;
             let scaleFactor = 1;
-            let similarPersons = []; // 存储相似行人数据
+            let similarPersons = [];
+            let mapWidth = 1152;  // 地图原始宽度
+            let mapHeight = 1656; // 地图原始高度
+            
+            // 动画相关状态
+            let isAnimating = false;
+            let animationId = null;
+            let animationProgress = 0;
+            let animationDuration = 10000; // 动画总时长(ms)
+            let startTime = 0;
+            let personIcon = null; // 小人图标
+            let sortedTimePoints = []; // 按时间排序的点
             
             // 摄像头配置
             const cameras = [
@@ -316,8 +480,9 @@
             function resizeMap() {
                 const windowWidth = window.innerWidth;
                 const windowHeight = window.innerHeight;
-                const mapRatio = 1152 / 1656;
+                const mapRatio = mapWidth / mapHeight;
                 
+                // 计算地图尺寸以适应窗口
                 if (windowWidth / windowHeight > mapRatio) {
                     map.style.height = '100vh';
                     map.style.width = 'auto';
@@ -326,23 +491,26 @@
                     map.style.height = 'auto';
                 }
                 
-                // 调整轨迹画布大小
+                // 调整轨迹画布大小以匹配地图
                 const mapRect = map.getBoundingClientRect();
                 trackCanvas.width = mapRect.width;
                 trackCanvas.height = mapRect.height;
                 
                 adjustIconPosition();
-                // 重新定位相似行人图像
                 positionSimilarPersons();
-                // 重新绘制轨迹
                 drawTracks();
+                
+                // 如果有小人图标，更新其位置
+                if (personIcon && sortedTimePoints.length > 0) {
+                    updatePersonPosition(animationProgress);
+                }
             }
             
             // 调整图标位置
             function adjustIconPosition() {
                 const mapRect = map.getBoundingClientRect();
-                const scaleX = mapRect.width / 1152;
-                const scaleY = mapRect.height / 1656;
+                const scaleX = mapRect.width / mapWidth;
+                const scaleY = mapRect.height / mapHeight;
                 
                 document.querySelectorAll('.camera-icon').forEach(icon => {
                     if (icon.dataset.x && icon.dataset.y) {
@@ -452,11 +620,11 @@
                     const w = person.width * imageWidth * scaleFactor;
                     const h = person.height * imageHeight * scaleFactor;
                     
-                    ctx.strokeStyle = person.detectionId === selectedPersonId ? '#00ff00' : '#ff0000';
+                    ctx.strokeStyle = person.detectionId === selectedPersonId ? '#10B981' : '#ff0000';
                     ctx.lineWidth = person.detectionId === selectedPersonId ? 3 : 2;
                     ctx.strokeRect(x, y, w, h);
                     
-                    ctx.fillStyle = person.detectionId === selectedPersonId ? 'rgba(0, 255, 0, 0.7)' : 'rgba(255, 0, 0, 0.7)';
+                    ctx.fillStyle = person.detectionId === selectedPersonId ? 'rgba(16, 185, 129, 0.7)' : 'rgba(255, 0, 0, 0.7)';
                     ctx.fillRect(x, y - 20, 40, 20);
                     ctx.fillStyle = 'white';
                     ctx.font = '12px Arial';
@@ -479,8 +647,8 @@
             // 计算相似行人图像位置，避免重叠
             function calculatePosition(cameraIcon, existingElements) {
                 const mapRect = map.getBoundingClientRect();
-                const scaleX = mapRect.width / 1152;
-                const scaleY = mapRect.height / 1656;
+                const scaleX = mapRect.width / mapWidth;
+                const scaleY = mapRect.height / mapHeight;
                 
                 const baseX = parseFloat(cameraIcon.dataset.x) * scaleX;
                 const baseY = parseFloat(cameraIcon.dataset.y) * scaleY;
@@ -489,14 +657,47 @@
                 const imgWidth = 100;
                 const imgHeight = 150;
                 
+                // 尝试不同位置避免重叠
+                const positions = [
+                    { x: baseX + 40, y: baseY - imgHeight/2 },
+                    { x: baseX - imgWidth - 40, y: baseY - imgHeight/2 },
+                    { x: baseX + 40, y: baseY + imgHeight/2 },
+                    { x: baseX - imgWidth - 40, y: baseY + imgHeight/2 }
+                ];
+                
+                for (const pos of positions) {
+                    const newRect = {
+                        left: pos.x,
+                        top: pos.y,
+                        right: pos.x + imgWidth,
+                        bottom: pos.y + imgHeight
+                    };
+                    
+                    let hasOverlap = false;
+                    for (const elem of existingElements) {
+                        if (isOverlapping(newRect, elem.rect)) {
+                            hasOverlap = true;
+                            break;
+                        }
+                    }
+                    
+                    if (!hasOverlap) {
+                        return {
+                            x: pos.x,
+                            y: pos.y,
+                            rect: newRect
+                        };
+                    }
+                }
+                
                 // 如果所有位置都重叠，则使用基础位置并添加轻微偏移
                 return {
                     x: baseX + 300,
                     y: baseY,
                     rect: {
-                        left: baseX,
+                        left: baseX + 300,
                         top: baseY,
-                        right: baseX + imgWidth,
+                        right: baseX + 300 + imgWidth,
                         bottom: baseY + imgHeight
                     }
                 };
@@ -521,25 +722,205 @@
                 });
                 
                 document.querySelectorAll('.similar-person').forEach(elem => {
-                    const cameraId = elem.dataset.cameraId;
-                    const cameraIcon = document.querySelector(`.camera-icon[data-camera-id="${cameraId}"]`);
+                    const cameraDir = elem.dataset.cameraDir;
+                    const cameraIcon = document.querySelector(`.camera-icon[data-camera-dir="${cameraDir}"]`);
                     
                     if (cameraIcon) {
-                        const position = calculatePosition(cameraIcon, existingElements.filter(e => e.id !== cameraId));
+                        const position = calculatePosition(cameraIcon, existingElements.filter(e => e.id !== elem.dataset.cameraId));
                         elem.style.left = `${position.x}px`;
                         elem.style.top = `${position.y}px`;
                     }
                 });
             }
             
-            // 新增：按时间排序相似行人
+            // 格式化时间显示
+            function formatTime(timeStr) {
+                // 处理"20241121163305"格式的时间字符串
+                if (!timeStr || timeStr.length !== 14) return "00:00:00";
+                
+                const hour = timeStr.substring(8, 10);
+                const minute = timeStr.substring(10, 12);
+                const second = timeStr.substring(12, 14);
+                
+                return `${hour}:${minute}:${second}`;
+            }
+            
+            // 按时间排序相似行人
             function sortPersonsByTime(persons) {
                 return [...persons].sort((a, b) => {
-                    return new Date(a.video_start_time) - new Date(b.video_start_time);
+                    return new Date(parseTimeString(a.video_start_time)) - new Date(parseTimeString(b.video_start_time));
                 });
             }
             
-            // 新增：绘制轨迹
+            // 解析时间字符串为Date对象
+            function parseTimeString(timeStr) {
+                if (!timeStr || timeStr.length !== 14) return new Date();
+                
+                const year = timeStr.substring(0, 4);
+                const month = timeStr.substring(4, 6);
+                const day = timeStr.substring(6, 8);
+                const hour = timeStr.substring(8, 10);
+                const minute = timeStr.substring(10, 12);
+                const second = timeStr.substring(12, 14);
+                
+                return `${year}-${month}-${day}T${hour}:${minute}:${second}`;
+            }
+            
+            // 创建小人图标
+            function createPersonIcon() {
+                // 如果已有小人图标，先移除
+                if (personIcon) {
+                    personIcon.remove();
+                }
+                
+                // 创建小人容器
+                personIcon = document.createElement('div');
+                personIcon.className = 'person-icon';
+                personIcon.style.position = 'absolute';
+                personIcon.style.zIndex = '30';
+                
+                // 使用SVG绘制小人
+                personIcon.innerHTML = `
+                    <svg width="30" height="50" viewBox="0 0 30 50">
+                        <circle cx="15" cy="10" r="8" fill="#3B82F6" />
+                        <path d="M15,18 L15,30" stroke="#3B82F6" stroke-width="3" />
+                        <path d="M15,22 L5,38" stroke="#3B82F6" stroke-width="3" />
+                        <path d="M15,22 L25,38" stroke="#3B82F6" stroke-width="3" />
+                        <path d="M15,30 L5,48" stroke="#3B82F6" stroke-width="3" />
+                        <path d="M15,30 L25,48" stroke="#3B82F6" stroke-width="3" />
+                    </svg>
+                `;
+                
+                mapContainer.appendChild(personIcon);
+            }
+            
+            // 更新小人位置
+            function updatePersonPosition(progress) {
+                if (!personIcon || sortedTimePoints.length < 2) return;
+                
+                // 计算当前进度在时间轴上的位置
+                const totalDuration = sortedTimePoints[sortedTimePoints.length - 1].timestamp - 
+                                     sortedTimePoints[0].timestamp;
+                const currentTimestamp = sortedTimePoints[0].timestamp + (totalDuration * progress);
+                
+                // 找到当前时间点前后的两个点
+                let startPoint, endPoint;
+                for (let i = 0; i < sortedTimePoints.length - 1; i++) {
+                    if (currentTimestamp >= sortedTimePoints[i].timestamp && 
+                        currentTimestamp <= sortedTimePoints[i + 1].timestamp) {
+                        startPoint = sortedTimePoints[i];
+                        endPoint = sortedTimePoints[i + 1];
+                        break;
+                    }
+                }
+                
+                // 如果没找到（进度超出范围），使用第一个或最后一个点
+                if (!startPoint || !endPoint) {
+                    const targetPoint = progress <= 0 ? sortedTimePoints[0] : sortedTimePoints[sortedTimePoints.length - 1];
+                    personIcon.style.left = `${targetPoint.x}px`;
+                    personIcon.style.top = `${targetPoint.y}px`;
+                    personIcon.style.transform = `translate(-50%, -100%) rotate(0deg)`;
+                    return;
+                }
+                
+                // 计算两个点之间的插值比例
+                const segmentDuration = endPoint.timestamp - startPoint.timestamp;
+                const segmentProgress = (currentTimestamp - startPoint.timestamp) / segmentDuration;
+                
+                // 使用D3的缓动函数使移动更自然
+                const easedProgress = d3.easeCubicInOut(segmentProgress);
+                
+                // 计算当前位置（线性插值）
+                const currentX = startPoint.x + easedProgress * (endPoint.x - startPoint.x);
+                const currentY = startPoint.y + easedProgress * (endPoint.y - startPoint.y);
+                
+                // 计算旋转角度（面向移动方向）
+                const angle = Math.atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x) * (180 / Math.PI);
+                
+                // 更新小人位置和方向
+                personIcon.style.left = `${currentX}px`;
+                personIcon.style.top = `${currentY}px`;
+                personIcon.style.transform = `translate(-50%, -100%) rotate(${angle}deg)`;
+                
+                // 更新时间轴当前时间显示
+                const currentTime = new Date(startPoint.date.getTime() + segmentDuration * segmentProgress * 1000);
+                currentTimeLabel.textContent = `${currentTime.getHours().toString().padStart(2, '0')}:${currentTime.getMinutes().toString().padStart(2, '0')}:${currentTime.getSeconds().toString().padStart(2, '0')}`;
+            }
+            
+            // 动画循环
+            function animate(timestamp) {
+                if (!startTime) startTime = timestamp;
+                
+                // 计算动画进度（0到1之间）
+                const elapsed = timestamp - startTime;
+                animationProgress = Math.min(elapsed / animationDuration, 1);
+                
+                // 更新时间轴
+                timeline.value = animationProgress * 100;
+                
+                // 更新小人位置
+                updatePersonPosition(animationProgress);
+                
+                // 更新状态文本
+                animationStatus.textContent = `正在播放: ${Math.round(animationProgress * 100)}%`;
+                
+                // 如果动画未完成，继续请求下一帧
+                if (animationProgress < 1) {
+                    animationId = requestAnimationFrame(animate);
+                } else {
+                    // 动画完成
+                    stopAnimation();
+                    animationStatus.textContent = "动画完成";
+                }
+            }
+            
+            // 开始动画
+            function startAnimation() {
+                if (isAnimating || sortedTimePoints.length < 2) return;
+                
+                isAnimating = true;
+                startTime = 0;
+                playAnimationBtn.classList.add('hidden');
+                pauseAnimationBtn.classList.remove('hidden');
+                animationStatus.textContent = "正在播放...";
+                
+                animationId = requestAnimationFrame(animate);
+            }
+            
+            // 暂停动画
+            function pauseAnimation() {
+                if (!isAnimating) return;
+                
+                isAnimating = false;
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                }
+                playAnimationBtn.classList.remove('hidden');
+                pauseAnimationBtn.classList.add('hidden');
+                animationStatus.textContent = `已暂停: ${Math.round(animationProgress * 100)}%`;
+            }
+            
+            // 停止动画
+            function stopAnimation() {
+                isAnimating = false;
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                }
+                playAnimationBtn.classList.remove('hidden');
+                pauseAnimationBtn.classList.add('hidden');
+            }
+            
+            // 重置动画
+            function resetAnimation() {
+                stopAnimation();
+                animationProgress = 0;
+                timeline.value = 0;
+                updatePersonPosition(0);
+                animationStatus.textContent = "已重置";
+                currentTimeLabel.textContent = startTimeLabel.textContent;
+            }
+            
+            // 绘制轨迹
             function drawTracks() {
                 // 清除现有轨迹
                 trackCtx.clearRect(0, 0, trackCanvas.width, trackCanvas.height);
@@ -550,83 +931,99 @@
                 const sortedPersons = sortPersonsByTime(similarPersons);
                 
                 const mapRect = map.getBoundingClientRect();
-                const scaleX = mapRect.width / 1152;
-                const scaleY = mapRect.height / 1656;
+                const scaleX = mapRect.width / mapWidth;
+                const scaleY = mapRect.height / mapHeight;
                 
-                // 收集所有点的坐标
-                const points = [];
+                // 收集所有点的坐标和时间戳
+                sortedTimePoints = [];
                 sortedPersons.forEach(person => {
                     const cameraIcon = document.querySelector(`.camera-icon[data-camera-dir="${person.camera_dir}"]`);
                     if (cameraIcon && cameraIcon.dataset.x && cameraIcon.dataset.y) {
                         const x = parseFloat(cameraIcon.dataset.x) * scaleX;
                         const y = parseFloat(cameraIcon.dataset.y) * scaleY;
-                        points.push({ x, y, time: person.video_start_time });
+                        const date = new Date(parseTimeString(person.video_start_time));
+                        const timestamp = date.getTime() / 1000; // 转换为秒
+                        
+                        sortedTimePoints.push({
+                            x, y, 
+                            time: person.video_start_time,
+                            date,
+                            timestamp,
+                            cameraDir: person.camera_dir
+                        });
                     }
                 });
                 
-                // 绘制轨迹线
-                if (points.length >= 2) {
-                    trackCtx.beginPath();
-                    trackCtx.moveTo(points[0].x, points[0].y);
+                // 如果有足够的点，创建小人图标
+                if (sortedTimePoints.length >= 1) {
+                    createPersonIcon();
+                    updatePersonPosition(0);
                     
-                    for (let i = 1; i < points.length; i++) {
-                        trackCtx.lineTo(points[i].x, points[i].y);
+                    // 设置时间轴标签
+                    startTimeLabel.textContent = formatTime(sortedTimePoints[0].time);
+                    endTimeLabel.textContent = formatTime(sortedTimePoints[sortedTimePoints.length - 1].time);
+                    currentTimeLabel.textContent = startTimeLabel.textContent;
+                    
+                    // 显示时间轴
+                    timelineContainer.style.display = 'block';
+                    
+                    // 设置动画持续时间（根据实际时间差计算）
+                    if (sortedTimePoints.length >= 2) {
+                        const timeDiff = sortedTimePoints[sortedTimePoints.length - 1].timestamp - 
+                                        sortedTimePoints[0].timestamp;
+                        // 每个实际秒对应100ms动画时间，最少5秒，最多30秒
+                        animationDuration = Math.max(5000, Math.min(30000, timeDiff * 1000));
                     }
+                }
+                
+                // 绘制轨迹线（使用D3曲线生成器使线条更平滑）
+                if (sortedTimePoints.length >= 2) {
+                    // 创建D3路径生成器
+                    const lineGenerator = d3.line()
+                        .x(d => d.x)
+                        .y(d => d.y)
+                        .curve(d3.curveCatmullRom.alpha(0.5)); // 使用平滑曲线
                     
-                    trackCtx.strokeStyle = 'rgba(33, 150, 243, 0.8)';
+                    // 生成路径数据
+                    const pathData = lineGenerator(sortedTimePoints);
+                    
+                    // 绘制轨迹线
+                    trackCtx.beginPath();
+                    trackCtx.strokeStyle = 'rgba(59, 130, 246, 0.8)';
                     trackCtx.lineWidth = 3;
-                    trackCtx.setLineDash([5, 5]);
+                    trackCtx.setLineDash([8, 4]);
+                    trackCtx.path(pathData);
                     trackCtx.stroke();
                     trackCtx.setLineDash([]);
+                    
+                    // 绘制轨迹上的点
+                    trackCtx.fillStyle = 'rgba(59, 130, 246, 0.6)';
+                    sortedTimePoints.forEach(point => {
+                        trackCtx.beginPath();
+                        trackCtx.arc(point.x, point.y, 6, 0, Math.PI * 2);
+                        trackCtx.fill();
+                    });
                 }
                 
                 // 绘制时间点标记
-                points.forEach((point, index) => {
-                    // 创建或更新时间标记
-                    let marker = document.querySelector(`.time-marker[data-index="${index}"]`);
-                    let label = document.querySelector(`.time-label[data-index="${index}"]`);
-                    
-                    if (!marker) {
-                        marker = document.createElement('div');
-                        marker.className = 'time-marker';
-                        marker.dataset.index = index;
-                        mapContainer.appendChild(marker);
-                    }
-                    
-                    if (!label) {
-                        label = document.createElement('div');
-                        label.className = 'time-label';
-                        label.dataset.index = index;
-                        mapContainer.appendChild(label);
-                    }
-                    
-                    // 设置位置和内容
+                document.querySelectorAll('.time-marker, .time-label').forEach(elem => {
+                    elem.remove();
+                });
+                
+                sortedTimePoints.forEach((point, index) => {
+                    // 创建时间标记
+                    const marker = document.createElement('div');
+                    marker.className = 'time-marker';
+                    marker.dataset.index = index;
                     marker.style.left = `${point.x}px`;
                     marker.style.top = `${point.y}px`;
+                    mapContainer.appendChild(marker);
                     
-                    // 格式化时间显示
-                    console.log(point.time)
-                    
-                    // 处理"20241121163305"格式的时间字符串
-                    const timeStr = point.time; // "20241121163305"
-
-                    // 拆分年月日时分秒（字符串截取）
-                    const year = timeStr.substring(0, 4);      // 2024
-                    const month = timeStr.substring(4, 6);     // 11
-                    const day = timeStr.substring(6, 8);       // 21
-                    const hour = timeStr.substring(8, 10);     // 16
-                    const minute = timeStr.substring(10, 12);  // 33
-                    const second = timeStr.substring(12, 14);  // 05
-
-                    // 拼接为Date可识别的格式（ISO 8601）
-                    const isoTime = `${year}-${month}-${day}T${hour}:${minute}:${second}`;
-
-                    // 创建正确的Date对象
-                    const time = new Date(isoTime);
-                    
-                    const formattedTime = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}:${time.getSeconds().toString().padStart(2, '0')}`;
-                    label.textContent = formattedTime;
-                    console.log(formattedTime);
+                    // 创建时间标签
+                    const label = document.createElement('div');
+                    label.className = 'time-label';
+                    label.dataset.index = index;
+                    label.textContent = formatTime(point.time);
                     
                     // 定位标签，避免重叠
                     const labelOffset = 15;
@@ -638,12 +1035,14 @@
                         label.style.top = `${point.y + 10}px`;
                         label.style.textAlign = 'right';
                     }
+                    
+                    mapContainer.appendChild(label);
                 });
             }
             
             // 显示相似行人
             function showSimilarPersons(similarData) {
-                console.log(`成功调用showSimilarPersons，共加载 ${similarData.length} 个相似行人`);
+                console.log(`成功加载 ${similarData.length} 个相似行人`);
                 // 先清除现有相似行人图像和轨迹
                 clearSimilarPersons();
                 
@@ -656,13 +1055,12 @@
                     if (!cameraIcon) return;
                     
                     const position = calculatePosition(cameraIcon, existingElements);
-                    console.log(`行人在摄像头 [${cameraIcon.dataset.cameraId}] 中的位置：X=${position.x.toFixed(2)}, Y=${position.y.toFixed(2)}`);
                     
                     const similarElem = document.createElement('div');
                     similarElem.className = 'similar-person';
                     similarElem.dataset.cameraId = item.camera_id;
                     similarElem.dataset.cameraDir = item.camera_dir;
-                    similarElem.dataset.time = item.video_start_time; // 存储时间信息
+                    similarElem.dataset.time = item.video_start_time;
                     similarElem.style.left = `${position.x}px`;
                     similarElem.style.top = `${position.y}px`;
                     
@@ -672,7 +1070,7 @@
                     
                     const similarityLabel = document.createElement('div');
                     similarityLabel.className = 'similarity';
-                    similarityLabel.textContent = `时间: ${item.video_start_time}`;
+                    similarityLabel.textContent = `${formatTime(item.video_start_time)}`;
                     
                     similarElem.appendChild(img);
                     similarElem.appendChild(similarityLabel);
@@ -687,8 +1085,9 @@
                 // 绘制轨迹
                 drawTracks();
                 
-                // 显示清除按钮
+                // 显示控制按钮
                 clearSimilarBtn.style.display = 'block';
+                document.getElementById('animation-controls').style.display = 'flex';
             }
             
             // 清除相似行人图像和轨迹
@@ -696,15 +1095,22 @@
                 document.querySelectorAll('.similar-person').forEach(elem => {
                     elem.remove();
                 });
-                // 清除时间标记
                 document.querySelectorAll('.time-marker, .time-label').forEach(elem => {
                     elem.remove();
                 });
-                // 清除轨迹
                 trackCtx.clearRect(0, 0, trackCanvas.width, trackCanvas.height);
                 
+                // 移除小人图标
+                if (personIcon) {
+                    personIcon.remove();
+                    personIcon = null;
+                }
+                
                 similarPersons = [];
+                sortedTimePoints = [];
                 clearSimilarBtn.style.display = 'none';
+                timelineContainer.style.display = 'none';
+                resetAnimation();
             }
             
             // 处理预览图像点击事件
@@ -808,8 +1214,10 @@
                 
                 document.querySelectorAll('.camera-icon').forEach(icon => {
                     icon.removeAttribute('data-active');
+                    icon.classList.remove('active', 'camera-pulse');
                 });
                 camera.dataset.active = "true";
+                camera.classList.add('active', 'camera-pulse');
                 
                 const imagePath = `datasets/yisuo/${cameraDir}/img1/000001.jpg`;
                 
@@ -846,8 +1254,21 @@
                 reidExistsElement.textContent = '';
                 document.querySelectorAll('.camera-icon').forEach(icon => {
                     icon.removeAttribute('data-active');
+                    icon.classList.remove('active', 'camera-pulse');
                 });
-                positionSimilarPersons(); // 关闭后重新定位子图
+                positionSimilarPersons();
+            }
+            
+            // 时间轴变化处理
+            function handleTimelineChange() {
+                const progress = timeline.value / 100;
+                animationProgress = progress;
+                updatePersonPosition(progress);
+                
+                // 如果正在动画，暂停它
+                if (isAnimating) {
+                    pauseAnimation();
+                }
             }
             
             // 事件绑定
@@ -862,6 +1283,12 @@
             map.addEventListener('load', resizeMap);
             clearSimilarBtn.addEventListener('click', clearSimilarPersons);
             
+            // 动画控制事件
+            playAnimationBtn.addEventListener('click', startAnimation);
+            pauseAnimationBtn.addEventListener('click', pauseAnimation);
+            resetAnimationBtn.addEventListener('click', resetAnimation);
+            timeline.addEventListener('input', handleTimelineChange);
+            
             // 初始化
             resizeMap();
             initCameras();
@@ -873,3 +1300,4 @@
     </script>
 </body>
 </html>
+    
