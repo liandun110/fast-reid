@@ -11,21 +11,21 @@
             padding: 0;
             overflow: hidden;
             display: flex;
-            flex-direction: column;
+            justify-content: center;
+            align-items: center;
             height: 100vh;
             background-color: #f0f0f0;
         }
         
         #map-container {
             position: relative;
-            flex: 1;
             max-width: 100%;
-            overflow: hidden;
+            max-height: 100%;
         }
         
         #map {
             max-width: 100%;
-            max-height: 100%;
+            max-height: 100vh;
             display: block;
         }
         
@@ -38,46 +38,36 @@
             transform: translate(-50%, -50%); /* 居中定位 */
         }
         
-        /* 修改：相似行人显示在底部 */
-        #similar-container {
-            position: relative;
-            height: 180px;
-            background-color: #333;
-            padding: 10px;
-            overflow-x: auto;
-            overflow-y: hidden;
-            z-index: 30;
-            display: none;
-        }
-        
+        /* 新增：相似行人裁剪图样式 */
         .similar-person {
-            display: inline-block;
-            width: 50px;
-            height: 150px;
+            position: absolute;
+            width: 30px;
+            height: 80px;
             border: 2px solid #4CAF50;
             border-radius: 4px;
             background-color: white;
             overflow: hidden;
-            margin: 0 10px;
+            z-index: 20;
             box-shadow: 0 2px 8px rgba(0,0,0,0.2);
             transition: all 0.3s ease;
-            vertical-align: top;
         }
         
         .similar-person img {
             width: 100%;
-            height: 120px;
+            height: 100%;
             object-fit: cover;
         }
         
         .similar-person .similarity {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
             background-color: rgba(0,0,0,0.7);
             color: white;
             font-size: 12px;
             text-align: center;
             padding: 2px 0;
-            height: 30px;
-            box-sizing: border-box;
         }
         
         #preview-container {
@@ -231,9 +221,6 @@
         <!-- 摄像头图标将通过JS动态生成 -->
     </div>
     
-    <!-- 新增：底部相似行人容器 -->
-    <div id="similar-container"></div>
-    
     <div id="preview-container">
         <span id="close-preview">&times;</span>
         <div id="preview-wrapper">
@@ -270,8 +257,6 @@
             // 新增：轨迹画布
             const trackCanvas = document.getElementById('track-canvas');
             const trackCtx = trackCanvas.getContext('2d');
-            // 新增：相似行人容器
-            const similarContainer = document.getElementById('similar-container');
             
             // 存储检测数据和状态
             let detectionData = [];
@@ -332,14 +317,9 @@
                 const windowWidth = window.innerWidth;
                 const windowHeight = window.innerHeight;
                 const mapRatio = 1152 / 1656;
-                // 减去底部相似容器的高度
-                const similarContainerHeight = similarContainer.offsetHeight;
                 
-                // 调整地图容器高度
-                mapContainer.style.height = `calc(100vh - ${similarContainerHeight}px)`;
-                
-                if (windowWidth / (windowHeight - similarContainerHeight) > mapRatio) {
-                    map.style.height = '100%';
+                if (windowWidth / windowHeight > mapRatio) {
+                    map.style.height = '100vh';
                     map.style.width = 'auto';
                 } else {
                     map.style.width = '100%';
@@ -352,6 +332,8 @@
                 trackCanvas.height = mapRect.height;
                 
                 adjustIconPosition();
+                // 重新定位相似行人图像
+                positionSimilarPersons();
                 // 重新绘制轨迹
                 drawTracks();
             }
@@ -484,6 +466,119 @@
                 });
             }
             
+            // 检查两个矩形是否重叠
+            function isOverlapping(rect1, rect2) {
+                return !(
+                    rect1.right < rect2.left ||
+                    rect1.left > rect2.right ||
+                    rect1.bottom < rect2.top ||
+                    rect1.top > rect2.bottom
+                );
+            }
+            
+            // 计算相似行人图像位置，避免重叠
+            function calculatePosition(cameraIcon, existingElements) {
+                const mapRect = map.getBoundingClientRect();
+                const scaleX = mapRect.width / 1152;
+                const scaleY = mapRect.height / 1656;
+                
+                const baseX = parseFloat(cameraIcon.dataset.x) * scaleX;
+                const baseY = parseFloat(cameraIcon.dataset.y) * scaleY;
+                
+                // 图像尺寸
+                const imgWidth = 100;
+                const imgHeight = 150;
+                
+                // 尝试不同的位置偏移，寻找不重叠的位置
+                const offsets = [
+                    {x: imgWidth/2, y: 0},          // 右侧
+                    {x: -imgWidth/2, y: 0},         // 左侧
+                    {x: 0, y: imgHeight/2},         // 下方
+                    {x: 0, y: -imgHeight/2},        // 上方
+                    {x: imgWidth/2, y: imgHeight/2}, // 右下
+                    {x: -imgWidth/2, y: imgHeight/2}, // 左下
+                    {x: imgWidth/2, y: -imgHeight/2}, // 右上
+                    {x: -imgWidth/2, y: -imgHeight/2} // 左上
+                ];
+                
+                // 检查每个可能的位置
+                for (const offset of offsets) {
+                    const posX = baseX + offset.x;
+                    const posY = baseY + offset.y;
+                    
+                    const newRect = {
+                        left: posX - imgWidth/2,
+                        top: posY - imgHeight/2,
+                        right: posX + imgWidth/2,
+                        bottom: posY + imgHeight/2
+                    };
+                    
+                    // 检查是否与现有元素重叠
+                    let overlap = false;
+                    for (const elem of existingElements) {
+                        if (isOverlapping(newRect, elem.rect)) {
+                            overlap = true;
+                            break;
+                        }
+                    }
+                    
+                    // 检查是否在地图范围内
+                    if (!overlap && 
+                        newRect.left >= 0 && 
+                        newRect.top >= 0 && 
+                        newRect.right <= mapRect.width && 
+                        newRect.bottom <= mapRect.height) {
+                        return {
+                            x: posX,
+                            y: posY,
+                            rect: newRect
+                        };
+                    }
+                }
+                
+                // 如果所有位置都重叠，则使用基础位置并添加轻微偏移
+                return {
+                    x: baseX + imgWidth/2,
+                    y: baseY + imgHeight/2,
+                    rect: {
+                        left: baseX,
+                        top: baseY,
+                        right: baseX + imgWidth,
+                        bottom: baseY + imgHeight
+                    }
+                };
+            }
+            
+            // 定位所有相似行人图像
+            function positionSimilarPersons() {
+                const existingElements = [];
+                document.querySelectorAll('.similar-person').forEach(elem => {
+                    const rect = elem.getBoundingClientRect();
+                    const mapRect = map.getBoundingClientRect();
+                    
+                    existingElements.push({
+                        id: elem.dataset.cameraId,
+                        rect: {
+                            left: rect.left - mapRect.left,
+                            top: rect.top - mapRect.top,
+                            right: rect.right - mapRect.left,
+                            bottom: rect.bottom - mapRect.top
+                        }
+                    });
+                });
+                
+                document.querySelectorAll('.similar-person').forEach(elem => {
+                    const cameraId = elem.dataset.cameraId;
+                    const cameraIcon = document.querySelector(`.camera-icon[data-camera-id="${cameraId}"]`);
+                    
+                    if (cameraIcon) {
+                        const position = calculatePosition(cameraIcon, existingElements.filter(e => e.id !== cameraId));
+                        elem.style.left = `${position.x}px`;
+                        elem.style.top = `${position.y}px`;
+                    }
+                });
+            }
+            
             // 新增：按时间排序相似行人
             function sortPersonsByTime(persons) {
                 return [...persons].sort((a, b) => {
@@ -556,18 +651,21 @@
                     marker.style.left = `${point.x}px`;
                     marker.style.top = `${point.y}px`;
                     
+                    // 格式化时间显示
+                    console.log(point.time)
+                    
                     // 处理"20241121163305"格式的时间字符串
-                    const timeStr = point.time; 
+                    const timeStr = point.time; // "20241121163305"
 
-                    // 拆分年月日时分秒
-                    const year = timeStr.substring(0, 4);
-                    const month = timeStr.substring(4, 6);
-                    const day = timeStr.substring(6, 8);
-                    const hour = timeStr.substring(8, 10);
-                    const minute = timeStr.substring(10, 12);
-                    const second = timeStr.substring(12, 14);
+                    // 拆分年月日时分秒（字符串截取）
+                    const year = timeStr.substring(0, 4);      // 2024
+                    const month = timeStr.substring(4, 6);     // 11
+                    const day = timeStr.substring(6, 8);       // 21
+                    const hour = timeStr.substring(8, 10);     // 16
+                    const minute = timeStr.substring(10, 12);  // 33
+                    const second = timeStr.substring(12, 14);  // 05
 
-                    // 拼接为Date可识别的格式
+                    // 拼接为Date可识别的格式（ISO 8601）
                     const isoTime = `${year}-${month}-${day}T${hour}:${minute}:${second}`;
 
                     // 创建正确的Date对象
@@ -575,6 +673,7 @@
                     
                     const formattedTime = `${time.getHours().toString().padStart(2, '0')}:${time.getMinutes().toString().padStart(2, '0')}:${time.getSeconds().toString().padStart(2, '0')}`;
                     label.textContent = formattedTime;
+                    console.log(formattedTime);
                     
                     // 定位标签，避免重叠
                     const labelOffset = 15;
@@ -589,78 +688,70 @@
                 });
             }
             
-            // 显示相似行人（修改为在底部显示）
+            // 显示相似行人
             function showSimilarPersons(similarData) {
                 console.log(`成功调用showSimilarPersons，共加载 ${similarData.length} 个相似行人`);
                 // 先清除现有相似行人图像和轨迹
                 clearSimilarPersons();
                 
                 similarPersons = similarData;
+                const existingElements = [];
                 
-                // 按时间排序
-                const sortedPersons = sortPersonsByTime(similarData);
-                
-                // 在底部容器中显示相似行人
-                sortedPersons.forEach(item => {
+                // 为每个摄像头创建相似行人图像元素
+                similarData.forEach(item => {
+                    const cameraIcon = document.querySelector(`.camera-icon[data-camera-dir="${item.camera_dir}"]`);
+                    if (!cameraIcon) return;
+                    
+                    const position = calculatePosition(cameraIcon, existingElements);
+                    console.log(`行人在摄像头 [${cameraIcon.dataset.cameraId}] 中的位置：X=${position.x.toFixed(2)}, Y=${position.y.toFixed(2)}`);
+                    
                     const similarElem = document.createElement('div');
                     similarElem.className = 'similar-person';
                     similarElem.dataset.cameraId = item.camera_id;
                     similarElem.dataset.cameraDir = item.camera_dir;
                     similarElem.dataset.time = item.video_start_time; // 存储时间信息
+                    similarElem.style.left = `${position.x}px`;
+                    similarElem.style.top = `${position.y}px`;
                     
                     const img = document.createElement('img');
                     img.src = item.crop_image_url;
                     img.alt = `相似行人 (${item.similarity_percent})`;
                     
-                    // 格式化时间显示
-                    const timeStr = item.video_start_time;
-                    const year = timeStr.substring(0, 4);
-                    const month = timeStr.substring(4, 6);
-                    const day = timeStr.substring(6, 8);
-                    const hour = timeStr.substring(8, 10);
-                    const minute = timeStr.substring(10, 12);
-                    const second = timeStr.substring(12, 14);
-                    const formattedTime = `${month}/${day} ${hour}:${minute}`;
-                    
                     const similarityLabel = document.createElement('div');
                     similarityLabel.className = 'similarity';
-                    similarityLabel.textContent = `${formattedTime} (${item.similarity_percent})`;
+                    similarityLabel.textContent = `时间: ${item.video_start_time}`;
                     
                     similarElem.appendChild(img);
                     similarElem.appendChild(similarityLabel);
-                    similarContainer.appendChild(similarElem);
+                    mapContainer.appendChild(similarElem);
+                    
+                    existingElements.push({
+                        id: item.camera_id,
+                        rect: position.rect
+                    });
                 });
-                
-                // 显示底部容器和清除按钮
-                similarContainer.style.display = 'block';
-                clearSimilarBtn.style.display = 'block';
                 
                 // 绘制轨迹
                 drawTracks();
                 
-                // 调整地图大小以适应底部容器
-                resizeMap();
+                // 显示清除按钮
+                clearSimilarBtn.style.display = 'block';
             }
             
             // 清除相似行人图像和轨迹
             function clearSimilarPersons() {
-                // 清除底部容器中的相似行人
-                similarContainer.innerHTML = '';
-                similarContainer.style.display = 'none';
-                
+                document.querySelectorAll('.similar-person').forEach(elem => {
+                    elem.remove();
+                });
                 // 清除时间标记
                 document.querySelectorAll('.time-marker, .time-label').forEach(elem => {
                     elem.remove();
                 });
-                
                 // 清除轨迹
                 trackCtx.clearRect(0, 0, trackCanvas.width, trackCanvas.height);
                 
                 similarPersons = [];
                 clearSimilarBtn.style.display = 'none';
-                
-                // 调整地图大小
-                resizeMap();
             }
             
             // 处理预览图像点击事件
@@ -803,6 +894,7 @@
                 document.querySelectorAll('.camera-icon').forEach(icon => {
                     icon.removeAttribute('data-active');
                 });
+                positionSimilarPersons(); // 关闭后重新定位子图
             }
             
             // 事件绑定
