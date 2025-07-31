@@ -489,57 +489,10 @@
                 const imgWidth = 100;
                 const imgHeight = 150;
                 
-                // 尝试不同的位置偏移，寻找不重叠的位置
-                const offsets = [
-                    {x: imgWidth/2, y: 0},          // 右侧
-                    {x: -imgWidth/2, y: 0},         // 左侧
-                    {x: 0, y: imgHeight/2},         // 下方
-                    {x: 0, y: -imgHeight/2},        // 上方
-                    {x: imgWidth/2, y: imgHeight/2}, // 右下
-                    {x: -imgWidth/2, y: imgHeight/2}, // 左下
-                    {x: imgWidth/2, y: -imgHeight/2}, // 右上
-                    {x: -imgWidth/2, y: -imgHeight/2} // 左上
-                ];
-                
-                // 检查每个可能的位置
-                for (const offset of offsets) {
-                    const posX = baseX + offset.x;
-                    const posY = baseY + offset.y;
-                    
-                    const newRect = {
-                        left: posX - imgWidth/2,
-                        top: posY - imgHeight/2,
-                        right: posX + imgWidth/2,
-                        bottom: posY + imgHeight/2
-                    };
-                    
-                    // 检查是否与现有元素重叠
-                    let overlap = false;
-                    for (const elem of existingElements) {
-                        if (isOverlapping(newRect, elem.rect)) {
-                            overlap = true;
-                            break;
-                        }
-                    }
-                    
-                    // 检查是否在地图范围内
-                    if (!overlap && 
-                        newRect.left >= 0 && 
-                        newRect.top >= 0 && 
-                        newRect.right <= mapRect.width && 
-                        newRect.bottom <= mapRect.height) {
-                        return {
-                            x: posX,
-                            y: posY,
-                            rect: newRect
-                        };
-                    }
-                }
-                
                 // 如果所有位置都重叠，则使用基础位置并添加轻微偏移
                 return {
-                    x: baseX + imgWidth/2,
-                    y: baseY + imgHeight/2,
+                    x: baseX + 300,
+                    y: baseY,
                     rect: {
                         left: baseX,
                         top: baseY,
